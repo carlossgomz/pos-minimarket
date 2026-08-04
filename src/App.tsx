@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { check, Update } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { getDb } from "./db";
 import { ConfigRow, Usuario, Vendedor } from "./types";
 import ConfiguracionSync from "./screens/ConfiguracionSync";
@@ -65,6 +67,14 @@ export default function App() {
   // en la tienda con el escáner) no tiene acceso a Inventario.
   const [pendientesCodigo, setPendientesCodigo] = useState(0);
   const [mostrarPendientesCodigo, setMostrarPendientesCodigo] = useState(false);
+
+  // Actualización de la app (ver .github/workflows/release.yml): se
+  // revisa una vez al arrancar — el momento natural para aplicarla es
+  // cuando se reabre la app, no hace falta revisar en caliente todo el
+  // rato mientras está abierta.
+  const [actualizacion, setActualizacion] = useState<Update | null>(null);
+  const [instalando, setInstalando] = useState(false);
+  const [errorActualizacion, setErrorActualizacion] = useState<string | null>(null);
 
   async function cargarConfig() {
     try {
@@ -146,6 +156,30 @@ export default function App() {
     const id = setInterval(cargarPendientesCodigo, 20_000);
     return () => clearInterval(id);
   }, [configSyncLista]);
+
+  useEffect(() => {
+    if (!configSyncLista) return;
+    check()
+      .then((update) => setActualizacion(update))
+      .catch(() => {
+        // sin internet o el endpoint no respondió — no es un error para
+        // mostrarle al usuario, simplemente no hay forma de saber si hay
+        // una versión nueva en este momento
+      });
+  }, [configSyncLista]);
+
+  async function instalarActualizacion() {
+    if (!actualizacion) return;
+    setInstalando(true);
+    setErrorActualizacion(null);
+    try {
+      await actualizacion.downloadAndInstall();
+      await relaunch();
+    } catch (e) {
+      setErrorActualizacion(`No se pudo instalar la actualización: ${String(e)}`);
+      setInstalando(false);
+    }
+  }
 
   async function actualizarTasa(nuevaTasa: number) {
     const db = await getDb();
@@ -278,6 +312,14 @@ export default function App() {
             >
               🏷 {pendientesCodigo} sin código de barras
             </button>
+          )}
+          {actualizacion && (
+            <button type="button" className="link-btn" onClick={instalarActualizacion} disabled={instalando}>
+              {instalando ? "Instalando…" : `⬆ Actualizar a ${actualizacion.version}`}
+            </button>
+          )}
+          {errorActualizacion && (
+            <span style={{ color: "#a32d2d", fontSize: 12 }}>{errorActualizacion}</span>
           )}
           <button
             className="link-btn"

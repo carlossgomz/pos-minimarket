@@ -5,6 +5,8 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "updater:default",
+    "process:default",
     "allow-db-select",
     "allow-db-execute",
     "allow-tiene-config-sync",

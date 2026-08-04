@@ -1,0 +1,36 @@
+name: Publicar versión
+
+# Se dispara al empujar un tag "vX.Y.Z" (tiene que coincidir con el
+# "version" de src-tauri/tauri.conf.json). Compila, firma y publica un
+# Release en GitHub con el instalador y el latest.json que el updater de
+# la app usa para detectar la actualización — ver el plan de la sesión.
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publicar:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Instalar dependencias de Node
+        run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "POS Minimarket ${{ github.ref_name }}"
+          releaseDraft: false
+          prerelease: false

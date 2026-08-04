@@ -1,0 +1,621 @@
+:root {
+  color-scheme: light;
+  font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #f1efe8;
+  color: #2c2c2a;
+}
+
+.page {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+/* --- Sección que se sale del ancho angosto de .page (960px) para tablas
+   con muchas columnas, como el catálogo de Inventario — así todo el
+   contenido cabe sin necesidad de scroll horizontal en vez de apretar las
+   columnas hasta hacerlas ilegibles. */
+.seccion-ancha {
+  width: 100vw;
+  position: relative;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 1400px;
+  padding: 0 24px;
+  box-sizing: border-box;
+}
+
+.tabla-compacta th,
+.tabla-compacta td {
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  row-gap: 8px;
+  margin-bottom: 20px;
+}
+
+.header h1 {
+  font-size: 22px;
+  font-weight: 600;
+  color: #0f6e56;
+  white-space: nowrap;
+}
+
+.tasa {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  row-gap: 6px;
+  font-size: 13px;
+}
+
+.tasa input {
+  width: 90px;
+  padding: 6px 8px;
+  border: 1px solid #b4b2a9;
+  border-radius: 6px;
+}
+
+.card {
+  background: #fff;
+  border: 1px solid #d3d1c7;
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.modal-fondo {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 40px 16px;
+  z-index: 100;
+  overflow-y: auto;
+}
+
+.modal-caja {
+  background: #fff;
+  border-radius: 12px;
+  padding: 24px;
+  max-width: 720px;
+  width: 100%;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+}
+
+.card h2 {
+  font-size: 16px;
+  margin-top: 0;
+}
+
+.consumo-interno-toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+
+.form-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.form-row input {
+  flex: 1;
+  min-width: 120px;
+  padding: 8px 10px;
+  border: 1px solid #b4b2a9;
+  border-radius: 6px;
+}
+
+.form-row button {
+  padding: 8px 18px;
+  background: #0f6e56;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid #eceae2;
+}
+
+th {
+  color: #5f5e5a;
+  font-weight: 500;
+}
+
+.empty {
+  color: #888780;
+  text-align: center;
+  padding: 20px;
+}
+
+/* --- Campo con etiqueta fija (no depende del placeholder) --- */
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 14px;
+  align-items: end;
+}
+
+.form-grid.form-grid-ancho {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.campo {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.campo label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #5f5e5a;
+}
+
+.campo input,
+.campo select {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid #b4b2a9;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.campo-boton {
+  align-self: end;
+}
+
+.campo-boton button {
+  width: 100%;
+  padding: 9px 10px;
+  background: #0f6e56;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+/* --- Encabezado de paso numerado (formularios largos tipo asistente) --- */
+
+.paso-titulo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.paso-numero {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: #0f6e56;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* --- Aviso de producto existente / nuevo al agregar una línea --- */
+
+.aviso-producto {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.aviso-producto-existente {
+  background: #e5f3ee;
+  color: #0f6e56;
+}
+
+.aviso-producto-nuevo {
+  background: #fdf0dc;
+  color: #b9770e;
+}
+
+.previsualizacion {
+  background: #f1efe8;
+  border: 1px solid #d3d1c7;
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 14px;
+}
+
+/* --- Tarjetas de resumen (Inventario, etc.) --- */
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.stat-card {
+  margin-bottom: 0;
+}
+
+.stat-card-btn {
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.stat-card-alerta .ticket-total {
+  color: #b9770e;
+}
+
+/* --- Insignias de estado --- */
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.badge-ok {
+  background: #e5f3ee;
+  color: #0f6e56;
+}
+
+.badge-bajo {
+  background: #fdf0dc;
+  color: #b9770e;
+}
+
+.badge-critico {
+  background: #fcebeb;
+  color: #a32d2d;
+  font-weight: 700;
+}
+
+.badge-agotado {
+  background: #fcebeb;
+  color: #a32d2d;
+}
+
+.error {
+  color: #a32d2d;
+  background: #fcebeb;
+  padding: 10px 14px;
+  border-radius: 8px;
+}
+
+.hint {
+  font-size: 13px;
+  color: #888780;
+  margin-top: -8px;
+}
+
+.aviso-credito {
+  background: #fff3cd;
+  color: #7a5c00;
+  padding: 10px 14px;
+  border-radius: 8px;
+  margin-top: 8px;
+}
+
+.aviso-credito p {
+  margin: 0 0 8px;
+}
+
+.aviso-credito .form-row {
+  margin: 0;
+}
+
+.tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.tabs button {
+  padding: 8px 16px;
+  border: 1px solid #d3d1c7;
+  background: #fff;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 500;
+  color: #5f5e5a;
+}
+
+.tabs button.tab-activo {
+  background: #0f6e56;
+  color: #fff;
+  border-color: #0f6e56;
+}
+
+.venta-layout {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+.cant-input {
+  width: 60px;
+  padding: 4px 6px;
+  border: 1px solid #b4b2a9;
+  border-radius: 6px;
+}
+
+/* Antes TODO botón de texto (quitar, ver detalle, editar, cancelar,
+   ver ventas...) salía en rojo — parecía que cualquier acción neutral
+   fuera destructiva. Ahora el color por defecto es neutral (el mismo
+   verde de las acciones principales) y solo las acciones que de verdad
+   eliminan/cancelan algo usan .link-btn-danger. */
+.link-btn {
+  background: #eaf3ef;
+  border: 1px solid transparent;
+  color: #0f6e56;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
+  margin: 2px 2px 2px 0;
+  transition: background 0.15s ease;
+}
+
+.link-btn:hover {
+  background: #d9ece3;
+}
+
+.link-btn-danger {
+  color: #a32d2d;
+  background: #fbebea;
+}
+
+.link-btn-danger:hover {
+  background: #f6d6d4;
+}
+
+.totales {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid #eceae2;
+  font-size: 14px;
+}
+
+.lista-pagos {
+  list-style: none;
+  padding: 0;
+  margin: 10px 0;
+}
+
+.lista-pagos li {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px solid #eceae2;
+  font-size: 14px;
+}
+
+.restante-pendiente {
+  color: #b9770e;
+}
+
+.cobrar-btn {
+  width: 100%;
+  margin-top: 14px;
+  padding: 12px;
+  background: #0f6e56;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+/* --- Cobro rápido: un click cobra el total exacto con ese método --- */
+
+.cobro-rapido {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.cobro-rapido-btn {
+  flex: 1;
+  min-width: 150px;
+  padding: 14px 10px;
+  background: #0f6e56;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.cobro-rapido-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.ticket {
+  max-width: 480px;
+  margin: 0 auto;
+}
+
+.ticket-empresa {
+  font-weight: 600;
+  font-size: 16px;
+}
+
+.ticket-meta {
+  font-size: 13px;
+  color: #5f5e5a;
+  margin-bottom: 12px;
+}
+
+.ticket-total {
+  font-size: 17px;
+  font-weight: 700;
+}
+
+/* .imprimible: igual idea que .ticket (única región visible al
+   imprimir), pero para vistas que conviven con la pantalla normal
+   (catálogo, reportes) en vez de reemplazarla — por eso está oculta en
+   pantalla y solo aparece dentro de @media print. */
+.imprimible {
+  display: none;
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  .ticket,
+  .ticket *,
+  .imprimible,
+  .imprimible * {
+    visibility: visible;
+  }
+
+  .ticket,
+  .imprimible {
+    display: block;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    padding: 12px;
+    border: none;
+  }
+
+  .imprimible table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .imprimible th,
+  .imprimible td {
+    border: 1px solid #999;
+    padding: 4px 6px;
+    text-align: left;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+}
+
+/* --- Pestañas de tickets abiertos (varias facturas a la vez) --- */
+
+.ticket-tabs {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.ticket-tab {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid #d3d1c7;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.ticket-tab-activo {
+  border-color: #0f6e56;
+}
+
+.ticket-tab-btn {
+  border: none;
+  background: transparent;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  color: #5f5e5a;
+}
+
+.ticket-tab-activo .ticket-tab-btn {
+  background: #0f6e56;
+  color: #fff;
+}
+
+.ticket-tab-cerrar {
+  border: none;
+  border-left: 1px solid rgba(0, 0, 0, 0.08);
+  background: transparent;
+  padding: 0 10px;
+  cursor: pointer;
+  font-size: 15px;
+  color: #a32d2d;
+}
+
+.ticket-tab-activo .ticket-tab-cerrar {
+  border-left-color: rgba(255, 255, 255, 0.3);
+  color: #fff;
+}
+
+.ticket-tab-nuevo {
+  border: 1px dashed #b4b2a9;
+  background: transparent;
+  border-radius: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #5f5e5a;
+  font-weight: 500;
+}
+
+.ticket-tab-nuevo:hover {
+  border-color: #0f6e56;
+  color: #0f6e56;
+}

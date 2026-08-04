@@ -1,0 +1,22 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Permisos por defecto de la ventana principal",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "allow-db-select",
+    "allow-db-execute",
+    "allow-tiene-config-sync",
+    "allow-guardar-config-sync",
+    "allow-estado-conexion",
+    "allow-escanear-factura",
+    "allow-confirmar-venta",
+    "allow-ajustar-stock",
+    "allow-registrar-abono-cliente",
+    "allow-registrar-abono-cliente-total",
+    "allow-registrar-pago-proveedor",
+    "allow-registrar-consumo-interno",
+    "allow-guardar-factura-compra"
+  ]
+}

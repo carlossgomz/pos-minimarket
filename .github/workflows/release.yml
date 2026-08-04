@@ -12,6 +12,10 @@ on:
 jobs:
   publicar:
     runs-on: windows-latest
+    # Sin esto, el GITHUB_TOKEN automático viene de solo lectura y falla
+    # al crear el Release ("Resource not accessible by integration").
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 

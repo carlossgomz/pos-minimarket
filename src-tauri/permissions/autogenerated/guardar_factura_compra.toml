@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-guardar-factura-compra"
+description = "Enables the guardar_factura_compra command without any pre-configured scope."
+commands.allow = ["guardar_factura_compra"]
+
+[[permission]]
+identifier = "deny-guardar-factura-compra"
+description = "Denies the guardar_factura_compra command without any pre-configured scope."
+commands.deny = ["guardar_factura_compra"]

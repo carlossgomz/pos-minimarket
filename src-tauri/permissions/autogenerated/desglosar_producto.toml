@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desglosar-producto"
+description = "Enables the desglosar_producto command without any pre-configured scope."
+commands.allow = ["desglosar_producto"]
+
+[[permission]]
+identifier = "deny-desglosar-producto"
+description = "Denies the desglosar_producto command without any pre-configured scope."
+commands.deny = ["desglosar_producto"]

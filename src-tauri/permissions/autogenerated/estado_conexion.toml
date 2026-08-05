@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-estado-conexion"
+description = "Enables the estado_conexion command without any pre-configured scope."
+commands.allow = ["estado_conexion"]
+
+[[permission]]
+identifier = "deny-estado-conexion"
+description = "Denies the estado_conexion command without any pre-configured scope."
+commands.deny = ["estado_conexion"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-guardar-config-sync"
+description = "Enables the guardar_config_sync command without any pre-configured scope."
+commands.allow = ["guardar_config_sync"]
+
+[[permission]]
+identifier = "deny-guardar-config-sync"
+description = "Denies the guardar_config_sync command without any pre-configured scope."
+commands.deny = ["guardar_config_sync"]

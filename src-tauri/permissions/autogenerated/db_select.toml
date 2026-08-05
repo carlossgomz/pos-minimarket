@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-db-select"
+description = "Enables the db_select command without any pre-configured scope."
+commands.allow = ["db_select"]
+
+[[permission]]
+identifier = "deny-db-select"
+description = "Denies the db_select command without any pre-configured scope."
+commands.deny = ["db_select"]

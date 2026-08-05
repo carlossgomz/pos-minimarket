@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-eliminar-factura-compra"
+description = "Enables the eliminar_factura_compra command without any pre-configured scope."
+commands.allow = ["eliminar_factura_compra"]
+
+[[permission]]
+identifier = "deny-eliminar-factura-compra"
+description = "Denies the eliminar_factura_compra command without any pre-configured scope."
+commands.deny = ["eliminar_factura_compra"]

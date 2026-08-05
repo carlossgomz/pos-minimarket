@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-registrar-consumo-interno"
+description = "Enables the registrar_consumo_interno command without any pre-configured scope."
+commands.allow = ["registrar_consumo_interno"]
+
+[[permission]]
+identifier = "deny-registrar-consumo-interno"
+description = "Denies the registrar_consumo_interno command without any pre-configured scope."
+commands.deny = ["registrar_consumo_interno"]

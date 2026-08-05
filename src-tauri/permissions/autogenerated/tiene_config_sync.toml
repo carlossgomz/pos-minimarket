@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-tiene-config-sync"
+description = "Enables the tiene_config_sync command without any pre-configured scope."
+commands.allow = ["tiene_config_sync"]
+
+[[permission]]
+identifier = "deny-tiene-config-sync"
+description = "Denies the tiene_config_sync command without any pre-configured scope."
+commands.deny = ["tiene_config_sync"]

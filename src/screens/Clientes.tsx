@@ -12,6 +12,7 @@ export default function Clientes() {
   const [nombre, setNombre] = useState("");
   const [cedula, setCedula] = useState("");
   const [telefono, setTelefono] = useState("");
+  const [direccion, setDireccion] = useState("");
   const [mensaje, setMensaje] = useState<string | null>(null);
 
   async function cargarClientes() {
@@ -57,8 +58,8 @@ export default function Clientes() {
     const db = await getDb();
     try {
       await db.execute(
-        "INSERT INTO clientes (id, nombre, cedula, telefono) VALUES ($1,$2,$3,$4)",
-        [crypto.randomUUID(), nombre, cedula, telefono || null]
+        "INSERT INTO clientes (id, nombre, cedula, telefono, direccion) VALUES ($1,$2,$3,$4,$5)",
+        [crypto.randomUUID(), nombre, cedula, telefono || null, direccion || null]
       );
     } catch (e) {
       setMensaje(`No se pudo crear el cliente (¿cédula repetida?): ${String(e)}`);
@@ -67,6 +68,7 @@ export default function Clientes() {
     setNombre("");
     setCedula("");
     setTelefono("");
+    setDireccion("");
     await cargarClientes();
   }
 
@@ -78,6 +80,15 @@ export default function Clientes() {
     if (seleccionado?.id === c.id) setSeleccionado({ ...c, credito_autorizado: nuevo });
   }
 
+  async function actualizarDireccion(c: Cliente, nuevaDireccion: string) {
+    const valor = nuevaDireccion.trim();
+    if (valor === (c.direccion ?? "")) return;
+    const db = await getDb();
+    await db.execute("UPDATE clientes SET direccion = $1 WHERE id = $2", [valor || null, c.id]);
+    setSeleccionado({ ...c, direccion: valor || null });
+    await cargarClientes();
+  }
+
   return (
     <div className="venta-layout">
       <div className="card">
@@ -86,6 +97,7 @@ export default function Clientes() {
           <input placeholder="Nombre" value={nombre} onChange={(e) => setNombre(e.target.value)} required />
           <input placeholder="Cédula" value={cedula} onChange={(e) => setCedula(e.target.value)} required />
           <input placeholder="Teléfono (opcional)" value={telefono} onChange={(e) => setTelefono(e.target.value)} />
+          <input placeholder="Dirección (opcional)" value={direccion} onChange={(e) => setDireccion(e.target.value)} />
           <button type="submit">Guardar</button>
         </form>
         {mensaje && <p className="error">{mensaje}</p>}
@@ -104,6 +116,7 @@ export default function Clientes() {
               <th>Cédula</th>
               <th>Crédito</th>
               <th></th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -112,6 +125,7 @@ export default function Clientes() {
                 <td>{c.nombre}</td>
                 <td>{c.cedula}</td>
                 <td>{c.credito_autorizado ? "Autorizado" : "No"}</td>
+                <td>{c.cliente_app_id && <span className="badge badge-ok">📱 App</span>}</td>
                 <td>
                   <button className="link-btn" onClick={() => abrirFicha(c)}>
                     ver ficha
@@ -121,7 +135,7 @@ export default function Clientes() {
             ))}
             {clientes.length === 0 && (
               <tr>
-                <td colSpan={4} className="empty">
+                <td colSpan={5} className="empty">
                   Sin clientes todavía.
                 </td>
               </tr>
@@ -135,11 +149,23 @@ export default function Clientes() {
           <p className="hint">Selecciona un cliente para ver su ficha.</p>
         ) : (
           <>
-            <h2>{seleccionado.nombre}</h2>
+            <h2>
+              {seleccionado.nombre} {seleccionado.cliente_app_id && <span className="badge badge-ok">📱 App</span>}
+            </h2>
             <p className="hint">
               Cédula: {seleccionado.cedula}
               {seleccionado.telefono ? ` · Tel: ${seleccionado.telefono}` : ""}
             </p>
+            <div className="form-row" style={{ alignItems: "center" }}>
+              <label style={{ alignSelf: "center" }}>Dirección</label>
+              <input
+                key={seleccionado.id}
+                placeholder="Sin dirección registrada"
+                defaultValue={seleccionado.direccion ?? ""}
+                onBlur={(e) => actualizarDireccion(seleccionado, e.target.value)}
+                style={{ flex: 1 }}
+              />
+            </div>
             <div className="form-row">
               <label>
                 <input

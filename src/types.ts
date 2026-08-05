@@ -70,6 +70,12 @@ export type LineaCarrito = {
   stock_disponible: number;
 };
 
+export type Categoria = {
+  id: string;
+  nombre: string;
+  margen_defecto: number;
+};
+
 export type Proveedor = {
   id: string;
   nombre: string;
@@ -176,6 +182,11 @@ export type Cliente = {
   nombre: string;
   cedula: string;
   telefono: string | null;
+  direccion: string | null;
+  // Id del Cliente en la app de delivery, si tiene cuenta ahí — null si se
+  // creó solo en caja. No se fusiona con la cuenta de delivery, solo la
+  // referencia (ver migración 0014).
+  cliente_app_id: string | null;
   credito_autorizado: number; // 0/1
 };
 
@@ -214,6 +225,7 @@ export type FacturaVentaCompleta = {
   fecha_hora: string;
   cliente_nombre: string | null;
   cliente_cedula: string | null;
+  cliente_direccion: string | null;
   vendedor_nombre: string | null;
   tasa_cambio_dia: number;
   subtotal_bs: number;
@@ -231,6 +243,7 @@ export type FacturaVentaItemDetalle = {
 };
 
 export type FacturaVentaPagoDetalle = {
+  id: string;
   metodo: string;
   monto_bs: number;
   referencia: string | null;
@@ -238,6 +251,7 @@ export type FacturaVentaPagoDetalle = {
 
 export type FacturaCompraResumen = {
   id: string;
+  proveedor_id: string;
   numero_factura: string;
   fecha: string;
   proveedor_nombre: string;
@@ -246,6 +260,10 @@ export type FacturaCompraResumen = {
   monto_total_usd: number;
   monto_pagado_usd: number;
   estado: string;
+  // 1 si todavía no se vendió nada de su stock ni se le pagó nada al
+  // proveedor — solo en ese caso se puede editar/eliminar (ver
+  // factura_compra_bloqueo en src-tauri/src/comandos.rs).
+  editable: number;
 };
 
 export type FacturaCompraItemDetalle = {
@@ -261,6 +279,37 @@ export type FacturaCompraItemDetalle = {
   tasa_iva_aplicada: number;
   aplica_descuento: number; // 0/1
   descuento_aplicado: number;
+};
+
+// Usado solo para precargar una factura existente en el formulario de
+// edición — a diferencia de FacturaCompraItemDetalle (para mostrar), acá
+// hace falta el producto_id para poder reconstruir cada línea editable.
+export type FacturaCompraItemEditable = {
+  producto_id: string;
+  codigo_barra: string;
+  codigo_proveedor: string | null;
+  producto_nombre: string;
+  cantidad: number;
+  costo_unitario_usd: number;
+  margen_aplicado: number;
+};
+
+export type AporteCapitalExterno = {
+  id: string;
+  monto_bs: number;
+  nota: string | null;
+  created_at: string;
+};
+
+export type AvanceEfectivo = {
+  id: string;
+  fecha_hora: string;
+  monto_efectivo_bs: number;
+  monto_cobrado_bs: number;
+  metodo_cobro: string;
+  fuente_efectivo: "CAJA" | "CAPITAL_EXTERIOR";
+  referencia: string | null;
+  created_at: string;
 };
 
 export const METODOS_PAGO = [

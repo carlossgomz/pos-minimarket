@@ -19,6 +19,9 @@
     "allow-registrar-abono-cliente-total",
     "allow-registrar-pago-proveedor",
     "allow-registrar-consumo-interno",
-    "allow-guardar-factura-compra"
+    "allow-guardar-factura-compra",
+    "allow-editar-factura-compra",
+    "allow-eliminar-factura-compra",
+    "allow-desglosar-producto"
   ]
 }

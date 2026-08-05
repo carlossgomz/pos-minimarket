@@ -22,6 +22,27 @@ export default function Movimientos({ config }: { config: ConfigRow }) {
 
   const [movimientos, setMovimientos] = useState<MovimientoInventario[]>([]);
   const [totales, setTotales] = useState<{ entradas: number; salidas: number } | null>(null);
+  // Entradas/salidas de HOY (no el histórico completo de "totales") — con
+  // esto se puede reconstruir "con cuánto stock arrancó el día", restando
+  // del stock actual lo que entró y sumando lo que salió desde la
+  // medianoche (hora de Venezuela).
+  const [totalesHoy, setTotalesHoy] = useState<{ entradas: number; salidas: number } | null>(null);
+
+  // --- Desglosar en otro producto: ej. sale 1 caja de cigarrillos (el
+  // producto seleccionado arriba) y entran 20 cigarrillos sueltos (otro
+  // producto del catálogo, con su propio código de barras). El costo del
+  // paquete que se rompe se reparte entre las unidades generadas, así que
+  // la ganancia de vender por unidad queda calculada bien (ver
+  // desglosar_producto en src-tauri/src/comandos.rs).
+  const [destinoBusqueda, setDestinoBusqueda] = useState("");
+  const [resultadosDestino, setResultadosDestino] = useState<ProductoInventario[]>([]);
+  const [mostrarDropdownDestino, setMostrarDropdownDestino] = useState(false);
+  const [productoDestino, setProductoDestino] = useState<ProductoInventario | null>(null);
+  const [cantidadOrigen, setCantidadOrigen] = useState("1");
+  const [unidadesGeneradas, setUnidadesGeneradas] = useState("");
+  const [motivoDesglose, setMotivoDesglose] = useState("");
+  const [guardandoDesglose, setGuardandoDesglose] = useState(false);
+  const [mensajeDesglose, setMensajeDesglose] = useState<string | null>(null);
 
   // Búsqueda de producto en vivo, igual que en Venta.
   useEffect(() => {
@@ -66,10 +87,21 @@ export default function Movimientos({ config }: { config: ConfigRow }) {
         entradas: totalesRows.find((r) => r.tipo === "ENTRADA")?.total ?? 0,
         salidas: totalesRows.find((r) => r.tipo === "SALIDA")?.total ?? 0,
       });
+
+      const hoy = fechaHoraVenezuela().slice(0, 10);
+      const totalesHoyRows = await db.select<{ tipo: string; total: number }[]>(
+        `SELECT tipo, SUM(cantidad) as total FROM movimientos_inventario WHERE producto_id = $1 AND date(created_at) = $2 GROUP BY tipo`,
+        [productoId, hoy]
+      );
+      setTotalesHoy({
+        entradas: totalesHoyRows.find((r) => r.tipo === "ENTRADA")?.total ?? 0,
+        salidas: totalesHoyRows.find((r) => r.tipo === "SALIDA")?.total ?? 0,
+      });
     } else {
       const rows = await db.select<MovimientoInventario[]>(`${base} ORDER BY m.created_at DESC LIMIT 50`);
       setMovimientos(rows);
       setTotales(null);
+      setTotalesHoy(null);
     }
   }
 
@@ -86,6 +118,94 @@ export default function Movimientos({ config }: { config: ConfigRow }) {
     setCantidad("");
     setMotivo("");
     setMensaje(null);
+    setProductoDestino(null);
+    setDestinoBusqueda("");
+    setCantidadOrigen("1");
+    setUnidadesGeneradas("");
+    setMotivoDesglose("");
+    setMensajeDesglose(null);
+  }
+
+  // Búsqueda del producto destino del desglose — igual que la de arriba,
+  // pero excluyendo el producto origen (no tiene sentido desglosarlo
+  // contra sí mismo).
+  useEffect(() => {
+    const term = destinoBusqueda.trim();
+    if (term.length < 2) {
+      setResultadosDestino([]);
+      setMostrarDropdownDestino(false);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      const db = await getDb();
+      const rows = await db.select<ProductoInventario[]>(
+        `SELECT p.*, c.nombre as categoria_nombre
+         FROM productos p LEFT JOIN categorias c ON c.id = p.categoria_id
+         WHERE (p.nombre LIKE $1 OR p.codigo_barra LIKE $1) AND p.id != $2
+         ORDER BY p.nombre LIMIT 8`,
+        [`%${term}%`, productoSeleccionado?.id ?? ""]
+      );
+      setResultadosDestino(rows);
+      setMostrarDropdownDestino(rows.length > 0);
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [destinoBusqueda, productoSeleccionado]);
+
+  function seleccionarProductoDestino(p: ProductoInventario) {
+    setProductoDestino(p);
+    setDestinoBusqueda("");
+    setResultadosDestino([]);
+    setMostrarDropdownDestino(false);
+    // Sugerencia de arranque: unidades por caja del origen × cajas a
+    // desglosar — se puede corregir a mano si no aplica.
+    const origenUnidadesPorPaquete = productoSeleccionado?.unidades_por_paquete || 1;
+    setUnidadesGeneradas(String(origenUnidadesPorPaquete * Number(cantidadOrigen || "1")));
+  }
+
+  async function desglosar() {
+    if (!productoSeleccionado || !productoDestino) return;
+    const cantOrigen = Number(cantidadOrigen);
+    const unidGeneradas = Number(unidadesGeneradas);
+    if (!cantOrigen || cantOrigen <= 0) {
+      setMensajeDesglose(`La cantidad de ${productoSeleccionado.nombre} a desglosar debe ser mayor a 0.`);
+      return;
+    }
+    if (!unidGeneradas || unidGeneradas <= 0) {
+      setMensajeDesglose(`Las unidades generadas de ${productoDestino.nombre} deben ser mayor a 0.`);
+      return;
+    }
+    setGuardandoDesglose(true);
+    try {
+      await invoke("desglosar_producto", {
+        input: {
+          producto_origen_id: productoSeleccionado.id,
+          producto_destino_id: productoDestino.id,
+          cantidad_origen: cantOrigen,
+          unidades_generadas: unidGeneradas,
+          motivo: motivoDesglose.trim() || `Desglose a ${productoDestino.nombre}`,
+          fecha_hora: fechaHoraVenezuela(),
+        },
+      });
+    } catch (e) {
+      setMensajeDesglose(`No se pudo desglosar: ${String(e)}`);
+      setGuardandoDesglose(false);
+      return;
+    }
+
+    const db = await getDb();
+    const rows = await db.select<ProductoInventario[]>(
+      `SELECT p.*, c.nombre as categoria_nombre FROM productos p LEFT JOIN categorias c ON c.id = p.categoria_id WHERE p.id = $1`,
+      [productoSeleccionado.id]
+    );
+    if (rows[0]) setProductoSeleccionado(rows[0]);
+    await cargarMovimientos(productoSeleccionado.id);
+
+    setProductoDestino(null);
+    setCantidadOrigen("1");
+    setUnidadesGeneradas("");
+    setMotivoDesglose("");
+    setMensajeDesglose(null);
+    setGuardandoDesglose(false);
   }
 
   async function registrarMovimiento() {
@@ -135,6 +255,13 @@ export default function Movimientos({ config }: { config: ConfigRow }) {
     productoSeleccionado && productoSeleccionado.costo_actual_usd > 0
       ? (gananciaUnitariaUsd(productoSeleccionado) / productoSeleccionado.costo_actual_usd) * 100
       : 0;
+
+  // stock actual - lo que entró hoy + lo que salió hoy = con cuánto se
+  // arrancó el día (antes de la primera venta/entrada de hoy).
+  const stockInicioHoy =
+    productoSeleccionado && totalesHoy
+      ? productoSeleccionado.stock_actual - totalesHoy.entradas + totalesHoy.salidas
+      : null;
 
   return (
     <div>
@@ -227,7 +354,15 @@ export default function Movimientos({ config }: { config: ConfigRow }) {
               <div className="card stat-card">
                 <h2>Stock actual</h2>
                 <p className="ticket-total">{productoSeleccionado.stock_actual}</p>
-                <p className="hint">mínimo: {productoSeleccionado.stock_minimo}</p>
+              </div>
+              <div className="card stat-card">
+                <h2>Stock al iniciar hoy</h2>
+                <p className="ticket-total">{stockInicioHoy ?? "—"}</p>
+                {totalesHoy && (
+                  <p className="hint">
+                    hoy: +{totalesHoy.entradas} / -{totalesHoy.salidas}
+                  </p>
+                )}
               </div>
               <div className="card stat-card">
                 <h2>Valor en inventario</h2>
@@ -280,6 +415,93 @@ export default function Movimientos({ config }: { config: ConfigRow }) {
               </button>
             </div>
             {mensaje && <p className="error">{mensaje}</p>}
+          </section>
+
+          <section className="card" style={{ position: "relative" }}>
+            <h2>Desglosar en otro producto</h2>
+            <p className="hint">
+              Para cuando algo se compra empaquetado pero se vende por unidad (ej. una caja de
+              cigarrillos que se vende cigarro por cigarro, con su propio código de barras). Esto
+              descuenta <strong>{productoSeleccionado.nombre}</strong> como salida y suma stock al
+              producto que elijas abajo, repartiendo el costo entre las unidades generadas.
+            </p>
+            <div className="form-row" style={{ position: "relative" }}>
+              <input
+                placeholder="Cantidad de este producto a desglosar"
+                type="number"
+                step="1"
+                style={{ maxWidth: 220 }}
+                value={cantidadOrigen}
+                onChange={(e) => setCantidadOrigen(e.target.value)}
+              />
+              <input
+                placeholder="Buscar el producto que recibe las unidades (nombre o código)"
+                value={productoDestino ? productoDestino.nombre : destinoBusqueda}
+                onChange={(e) => {
+                  setProductoDestino(null);
+                  setDestinoBusqueda(e.target.value);
+                }}
+                onFocus={() => resultadosDestino.length > 0 && setMostrarDropdownDestino(true)}
+                onBlur={() => setTimeout(() => setMostrarDropdownDestino(false), 150)}
+              />
+              {mostrarDropdownDestino && (
+                <ul
+                  style={{
+                    position: "absolute",
+                    top: "calc(100% + 4px)",
+                    left: 0,
+                    right: 0,
+                    background: "#fff",
+                    border: "1px solid #d3d1c7",
+                    borderRadius: 8,
+                    listStyle: "none",
+                    margin: 0,
+                    padding: 4,
+                    zIndex: 10,
+                    boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+                  }}
+                >
+                  {resultadosDestino.map((p) => (
+                    <li
+                      key={p.id}
+                      onMouseDown={() => seleccionarProductoDestino(p)}
+                      style={{
+                        padding: "8px 10px",
+                        borderRadius: 6,
+                        cursor: "pointer",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        fontSize: 14,
+                      }}
+                    >
+                      <span>{p.nombre}</span>
+                      <span style={{ color: "#5f5e5a" }}>{p.codigo_barra} · stock {p.stock_actual}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            {productoDestino && (
+              <div className="form-row" style={{ alignItems: "center" }}>
+                <input
+                  placeholder={`Unidades de ${productoDestino.nombre} generadas`}
+                  type="number"
+                  step="1"
+                  style={{ maxWidth: 260 }}
+                  value={unidadesGeneradas}
+                  onChange={(e) => setUnidadesGeneradas(e.target.value)}
+                />
+                <input
+                  placeholder="Motivo (opcional)"
+                  value={motivoDesglose}
+                  onChange={(e) => setMotivoDesglose(e.target.value)}
+                />
+                <button type="button" onClick={desglosar} disabled={guardandoDesglose}>
+                  {guardandoDesglose ? "Desglosando…" : "Desglosar"}
+                </button>
+              </div>
+            )}
+            {mensajeDesglose && <p className="error">{mensajeDesglose}</p>}
           </section>
         </>
       )}

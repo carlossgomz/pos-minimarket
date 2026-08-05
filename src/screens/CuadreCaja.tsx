@@ -43,11 +43,38 @@ export default function CuadreCaja() {
       `SELECT metodo, SUM(monto_bs) as monto FROM cobros_cliente WHERE date(created_at) = $1 GROUP BY metodo`,
       [fecha]
     );
+    // Avances de efectivo: lo cobrado por el método usado es un ingreso
+    // real (sube ese método). El efectivo entregado sale de la caja física
+    // SIEMPRE, sin importar si ese efectivo venía de las ventas del día o
+    // de un aporte de capital externo — ambos casos son plata que estaba
+    // físicamente en la caja. Por eso un aporte de capital externo también
+    // cuenta como un ingreso de EFECTIVO (entró a la misma caja) y todo
+    // avance (sea cual sea su fuente) cuenta como egreso de EFECTIVO.
+    const porAvanceCobro = await db.select<{ metodo_cobro: string; monto: number }[]>(
+      `SELECT metodo_cobro, SUM(monto_cobrado_bs) as monto FROM avances_efectivo WHERE date(created_at) = $1 GROUP BY metodo_cobro`,
+      [fecha]
+    );
+    const porAvanceEfectivo = await db.select<{ monto: number | null }[]>(
+      `SELECT SUM(monto_efectivo_bs) as monto FROM avances_efectivo WHERE date(created_at) = $1`,
+      [fecha]
+    );
+    const porAporteCapitalExterno = await db.select<{ monto: number | null }[]>(
+      `SELECT SUM(monto_bs) as monto FROM aportes_capital_externo WHERE date(created_at) = $1`,
+      [fecha]
+    );
+
     const esperadosIngreso: Record<string, number> = {};
     for (const r of porVenta) esperadosIngreso[r.metodo] = (esperadosIngreso[r.metodo] ?? 0) + r.monto;
     for (const r of porCobroCredito) {
       const m = r.metodo ?? "SIN_ESPECIFICAR";
       esperadosIngreso[m] = (esperadosIngreso[m] ?? 0) + r.monto;
+    }
+    for (const r of porAvanceCobro) {
+      esperadosIngreso[r.metodo_cobro] = (esperadosIngreso[r.metodo_cobro] ?? 0) + r.monto;
+    }
+    const aporteCapitalExterno = porAporteCapitalExterno[0]?.monto ?? 0;
+    if (aporteCapitalExterno > 0) {
+      esperadosIngreso.EFECTIVO = (esperadosIngreso.EFECTIVO ?? 0) + aporteCapitalExterno;
     }
 
     const porPagoProveedor = await db.select<{ metodo: string | null; monto: number }[]>(
@@ -58,6 +85,10 @@ export default function CuadreCaja() {
     for (const r of porPagoProveedor) {
       const m = r.metodo ?? "SIN_ESPECIFICAR";
       esperadosEgreso[m] = (esperadosEgreso[m] ?? 0) + r.monto;
+    }
+    const avanceEfectivo = porAvanceEfectivo[0]?.monto ?? 0;
+    if (avanceEfectivo > 0) {
+      esperadosEgreso.EFECTIVO = (esperadosEgreso.EFECTIVO ?? 0) + avanceEfectivo;
     }
 
     const guardados = await db.select<{ tipo: string; metodo: string; monto_contado_bs: number }[]>(

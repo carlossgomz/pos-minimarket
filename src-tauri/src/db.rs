@@ -126,6 +126,10 @@ const MIGRACIONES: &[(i64, &str, &str)] = &[
     (11, "gemini api key", include_str!("../migrations/0011_gemini_api_key.sql")),
     (12, "lotes de producto (fifo)", include_str!("../migrations/0012_lotes_producto.sql")),
     (13, "codigo de proveedor", include_str!("../migrations/0013_codigo_proveedor.sql")),
+    (14, "clientes delivery", include_str!("../migrations/0014_clientes_delivery.sql")),
+    (15, "direccion venta", include_str!("../migrations/0015_direccion_venta.sql")),
+    (16, "avances de efectivo", include_str!("../migrations/0016_avances_efectivo.sql")),
+    (17, "capital externo", include_str!("../migrations/0017_capital_externo.sql")),
 ];
 
 pub async fn ejecutar_migraciones(conn: &libsql::Connection) -> anyhow::Result<()> {

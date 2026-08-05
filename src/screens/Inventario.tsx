@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { getDb } from "../db";
-import { ConfigRow, ProductoInventario } from "../types";
+import { Categoria, ConfigRow, ProductoInventario } from "../types";
 import { estadoStock, gananciaUnitariaUsd, precioVentaBsHoy, precioVentaUsd } from "../precios";
 import { fechaHoraVenezuela } from "../fecha";
 
@@ -14,6 +14,7 @@ type ProductoConMovimientos = ProductoInventario & {
 
 export default function Inventario({ config }: { config: ConfigRow }) {
   const [productos, setProductos] = useState<ProductoConMovimientos[]>([]);
+  const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [mensaje, setMensaje] = useState<string | null>(null);
 
@@ -48,6 +49,15 @@ export default function Inventario({ config }: { config: ConfigRow }) {
       setError(String(e));
     }
   }
+
+  async function cargarCategorias() {
+    const db = await getDb();
+    setCategorias(await db.select<Categoria[]>("SELECT * FROM categorias ORDER BY nombre"));
+  }
+
+  useEffect(() => {
+    cargarCategorias();
+  }, []);
 
   useEffect(() => {
     cargar();
@@ -124,6 +134,77 @@ export default function Inventario({ config }: { config: ConfigRow }) {
     await cargar();
   }
 
+  async function actualizarCodigo(p: ProductoInventario, nuevoCodigo: string) {
+    const codigo = nuevoCodigo.trim();
+    if (!codigo || codigo === p.codigo_barra) return;
+    const db = await getDb();
+    try {
+      await db.execute("UPDATE productos SET codigo_barra = $1 WHERE id = $2", [codigo, p.id]);
+    } catch (e) {
+      setMensaje(`No se pudo cambiar el código (¿ya existe en otro producto?): ${String(e)}`);
+      return;
+    }
+    setMensaje(null);
+    await cargar();
+  }
+
+  async function actualizarNombre(p: ProductoInventario, nuevoNombre: string) {
+    const valor = nuevoNombre.trim();
+    if (!valor || valor === p.nombre) return;
+    const db = await getDb();
+    await db.execute("UPDATE productos SET nombre = $1 WHERE id = $2", [valor, p.id]);
+    await cargar();
+  }
+
+  async function actualizarCategoria(p: ProductoInventario, categoriaId: string) {
+    const db = await getDb();
+    await db.execute("UPDATE productos SET categoria_id = $1 WHERE id = $2", [categoriaId || null, p.id]);
+    await cargar();
+  }
+
+  async function activarProducto(p: ProductoInventario) {
+    const db = await getDb();
+    await db.execute("UPDATE productos SET activo = 1 WHERE id = $1", [p.id]);
+    await cargar();
+  }
+
+  // Un producto solo se puede borrar del todo si nunca se vendió, compró
+  // ni tuvo ningún movimiento — si tiene historia, borrarlo dejaría huecos
+  // en ventas/facturas viejas (el nombre desaparecería de esos registros),
+  // así que en ese caso se ofrece desactivarlo en su lugar: deja de
+  // aparecer para vender pero conserva todo su historial.
+  async function eliminarProducto(p: ProductoInventario) {
+    setMensaje(null);
+    const db = await getDb();
+    const [conteo] = await db.select<{ total: number }[]>(
+      `SELECT
+         (SELECT COUNT(*) FROM venta_items WHERE producto_id = $1) +
+         (SELECT COUNT(*) FROM items_factura_compra WHERE producto_id = $1) +
+         (SELECT COUNT(*) FROM movimientos_inventario WHERE producto_id = $1) +
+         (SELECT COUNT(*) FROM lotes_producto WHERE producto_id = $1) as total`,
+      [p.id]
+    );
+
+    if (conteo.total > 0) {
+      if (
+        !window.confirm(
+          `"${p.nombre}" ya tiene historial (ventas, compras o movimientos), así que no se puede borrar del todo sin perder esos registros. ¿Lo desactivo en su lugar? Deja de poder venderse, pero conserva su historial.`
+        )
+      ) {
+        return;
+      }
+      await db.execute("UPDATE productos SET activo = 0 WHERE id = $1", [p.id]);
+      await cargar();
+      return;
+    }
+
+    if (!window.confirm(`¿Eliminar "${p.nombre}" del catálogo? No tiene historial, así que se borra por completo.`)) {
+      return;
+    }
+    await db.execute("DELETE FROM productos WHERE id = $1", [p.id]);
+    await cargar();
+  }
+
   return (
     <div>
       {error && <p className="error">Error: {error}</p>}
@@ -187,10 +268,10 @@ export default function Inventario({ config }: { config: ConfigRow }) {
             </button>
           </div>
           <p className="hint">
-            Costo y margen se editan directo en la tabla — escribe y sal del campo para guardar.
-            El resto de las columnas se recalculan solas con la tasa del día. Cuando a un producto
-            le queda 1 sola unidad, se marca como advertencia aunque no se haya configurado un
-            mínimo.
+            Código, nombre, categoría, costo y margen se editan directo en la tabla — escribe y
+            sal del campo (o cambia el desplegable) para guardar. El resto de las columnas se
+            recalculan solas con la tasa del día. Cuando a un producto le queda 1 sola unidad, se
+            marca como advertencia aunque no se haya configurado un mínimo.
           </p>
           <div style={{ overflowX: "auto" }}>
             <table className="tabla-compacta">
@@ -209,6 +290,7 @@ export default function Inventario({ config }: { config: ConfigRow }) {
                   <th>Salidas</th>
                   <th>Stock</th>
                   <th>Estado</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
@@ -217,9 +299,35 @@ export default function Inventario({ config }: { config: ConfigRow }) {
                   const rentabilidadPct = p.costo_actual_usd > 0 ? (gananciaUnitariaUsd(p) / p.costo_actual_usd) * 100 : 0;
                   return (
                     <tr key={p.id}>
-                      <td>{p.codigo_barra}</td>
-                      <td>{p.nombre}</td>
-                      <td>{p.categoria_nombre ?? "—"}</td>
+                      <td>
+                        <input
+                          className="cant-input"
+                          style={{ width: 100 }}
+                          defaultValue={p.codigo_barra}
+                          onBlur={(e) => actualizarCodigo(p, e.target.value)}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          className="cant-input"
+                          style={{ width: 150 }}
+                          defaultValue={p.nombre}
+                          onBlur={(e) => actualizarNombre(p, e.target.value)}
+                        />
+                      </td>
+                      <td>
+                        <select
+                          value={p.categoria_id ?? ""}
+                          onChange={(e) => actualizarCategoria(p, e.target.value)}
+                        >
+                          <option value="">Sin categoría</option>
+                          {categorias.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.nombre}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
                       <td>
                         <input
                           className="cant-input"
@@ -264,12 +372,26 @@ export default function Inventario({ config }: { config: ConfigRow }) {
                           </span>
                         )}
                       </td>
+                      <td>
+                        {!p.activo && (
+                          <button type="button" className="link-btn" onClick={() => activarProducto(p)}>
+                            activar
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="link-btn link-btn-danger"
+                          onClick={() => eliminarProducto(p)}
+                        >
+                          eliminar
+                        </button>
+                      </td>
                     </tr>
                   );
                 })}
                 {productosFiltrados.length === 0 && (
                   <tr>
-                    <td colSpan={13} className="empty">
+                    <td colSpan={14} className="empty">
                       {productos.length === 0 ? "Sin productos todavía. Agrega el primero arriba." : "Nada que coincida con el filtro."}
                     </td>
                   </tr>

@@ -4,6 +4,7 @@ import { getDb } from "../db";
 import {
   ConfigRow,
   FacturaCompraItemDetalle,
+  FacturaCompraItemEditable,
   FacturaCompraResumen,
   FacturaExtraidaIA,
   LineaFacturaBorrador,
@@ -79,6 +80,14 @@ export default function Compras({
   const [facturaDetalleAbierta, setFacturaDetalleAbierta] = useState<string | null>(null);
   const [itemsDetalleCompra, setItemsDetalleCompra] = useState<FacturaCompraItemDetalle[]>([]);
 
+  // --- Edición de una factura ya registrada: reutiliza el mismo
+  // formulario/tabla de "líneas" que una factura nueva — al guardar, si
+  // esto tiene un id, se llama a editar_factura_compra en vez de
+  // guardar_factura_compra. Solo se puede editar/eliminar mientras nada de
+  // su stock se haya vendido y no tenga pagos al proveedor (ver columna
+  // "editable" más abajo).
+  const [editandoFacturaId, setEditandoFacturaId] = useState<string | null>(null);
+
   async function cargarProveedores() {
     const db = await getDb();
     const rows = await db.select<Proveedor[]>("SELECT * FROM proveedores ORDER BY nombre");
@@ -88,8 +97,12 @@ export default function Compras({
   async function cargarFacturas() {
     const db = await getDb();
     const rows = await db.select<FacturaCompraResumen[]>(
-      `SELECT fc.id, fc.numero_factura, fc.fecha, pr.nombre as proveedor_nombre, fc.moneda,
-              fc.tasa_cambio_dia, fc.monto_total_usd, fc.monto_pagado_usd, fc.estado
+      `SELECT fc.id, fc.proveedor_id, fc.numero_factura, fc.fecha, pr.nombre as proveedor_nombre, fc.moneda,
+              fc.tasa_cambio_dia, fc.monto_total_usd, fc.monto_pagado_usd, fc.estado,
+              (fc.monto_pagado_usd <= 0 AND NOT EXISTS (
+                SELECT 1 FROM lotes_producto lp
+                WHERE lp.factura_compra_id = fc.id AND lp.cantidad_restante < lp.cantidad_inicial - 0.0001
+              )) as editable
        FROM facturas_compra fc JOIN proveedores pr ON pr.id = fc.proveedor_id
        ORDER BY fc.fecha DESC LIMIT 50`
     );
@@ -118,6 +131,76 @@ export default function Compras({
       [id]
     );
     setItemsDetalleCompra(items);
+  }
+
+  // Precarga una factura existente en el formulario de arriba, en modo
+  // edición — mismas líneas, editables en la misma tabla que una factura
+  // nueva. El costo unitario que trae ya incluye IVA/descuento aplicados
+  // en su momento, así que se carga directo como "precio unitario" con
+  // cajas=1 y sin volver a marcar IVA/descuento (si hace falta cambiarlos,
+  // se ajusta el costo unitario a mano).
+  async function cargarFacturaParaEditar(f: FacturaCompraResumen) {
+    const db = await getDb();
+    const items = await db.select<FacturaCompraItemEditable[]>(
+      `SELECT p.id as producto_id, p.codigo_barra, p.codigo_proveedor, p.nombre as producto_nombre,
+              i.cantidad, i.costo_unitario_usd, i.margen_aplicado
+       FROM items_factura_compra i JOIN productos p ON p.id = i.producto_id
+       WHERE i.factura_compra_id = $1`,
+      [f.id]
+    );
+    setProveedorId(f.proveedor_id);
+    setMostrarNuevoProveedor(false);
+    setNumeroFactura(f.numero_factura);
+    setMoneda(f.moneda as "USD" | "VES");
+    setTasaFactura(String(f.tasa_cambio_dia));
+    setLineas(
+      items.map((it) => ({
+        producto_id: it.producto_id,
+        codigo_barra: it.codigo_barra,
+        codigoProveedor: it.codigo_proveedor ?? undefined,
+        nombre: it.producto_nombre,
+        es_nuevo: false,
+        cajas: 0,
+        unidadSuelta: it.cantidad,
+        unidadesPorPaquete: 1,
+        precioPaqueteIngresado: it.costo_unitario_usd,
+        margen_aplicado: it.margen_aplicado,
+        aplicaIva: false,
+        tasaIva: 0,
+        aplicaDescuento: false,
+        descuentoPct: 0,
+      }))
+    );
+    setEditandoFacturaId(f.id);
+    setFacturaDetalleAbierta(null);
+    setMensaje(null);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function cancelarEdicionFactura() {
+    setEditandoFacturaId(null);
+    setLineas([]);
+    setNumeroFactura("");
+    setMensaje(null);
+  }
+
+  async function eliminarFactura(f: FacturaCompraResumen) {
+    if (!f.editable) return;
+    if (!window.confirm(`¿Eliminar la factura ${f.numero_factura}? Esto revierte el stock que había sumado.`)) {
+      return;
+    }
+    try {
+      await invoke("eliminar_factura_compra", { facturaId: f.id });
+    } catch (e) {
+      setMensaje(`No se pudo eliminar la factura: ${String(e)}`);
+      return;
+    }
+    if (editandoFacturaId === f.id) cancelarEdicionFactura();
+    if (facturaDetalleAbierta === f.id) {
+      setFacturaDetalleAbierta(null);
+      setItemsDetalleCompra([]);
+    }
+    await cargarFacturas();
   }
 
   async function guardarProveedor() {
@@ -509,43 +592,48 @@ export default function Compras({
     }
 
     setGuardando(true);
-    const facturaId = crypto.randomUUID();
+    const facturaId = editandoFacturaId ?? crypto.randomUUID();
+    const input = {
+      id: facturaId,
+      proveedor_id: proveedorId,
+      numero_factura: numeroFactura,
+      fecha_hora: fechaHoraVenezuela(),
+      moneda,
+      tasa_cambio_dia: tasa,
+      items: lineas.map((l) => ({
+        producto_id: l.producto_id,
+        es_nuevo: l.es_nuevo,
+        codigo_barra: l.codigo_barra,
+        codigo_proveedor: l.codigoProveedor ?? null,
+        nombre: l.nombre,
+        categoria_nombre: l.categoria ?? null,
+        cajas: l.cajas,
+        unidad_suelta: l.unidadSuelta,
+        unidades_por_paquete: l.unidadesPorPaquete,
+        cantidad_total: unidadesTotales(l),
+        costo_unitario_usd: costoUsdDeLinea(l),
+        margen_aplicado: l.margen_aplicado,
+        precio_venta_bs: precioBsDeLinea(l),
+        aplica_iva: l.aplicaIva,
+        tasa_iva_aplicada: l.tasaIva,
+        aplica_descuento: l.aplicaDescuento,
+        descuento_aplicado: l.descuentoPct,
+      })),
+    };
 
     try {
       // Todo esto — la factura, los productos nuevos, las líneas, el
       // stock y el movimiento de inventario — se guarda en una sola
       // transacción atómica real dentro de Rust (ver
       // src-tauri/src/comandos.rs). Si algo falla a mitad de camino, no
-      // queda nada a medias.
-      await invoke("guardar_factura_compra", {
-        input: {
-          id: facturaId,
-          proveedor_id: proveedorId,
-          numero_factura: numeroFactura,
-          fecha_hora: fechaHoraVenezuela(),
-          moneda,
-          tasa_cambio_dia: tasa,
-          items: lineas.map((l) => ({
-            producto_id: l.producto_id,
-            es_nuevo: l.es_nuevo,
-            codigo_barra: l.codigo_barra,
-            codigo_proveedor: l.codigoProveedor ?? null,
-            nombre: l.nombre,
-            categoria_nombre: l.categoria ?? null,
-            cajas: l.cajas,
-            unidad_suelta: l.unidadSuelta,
-            unidades_por_paquete: l.unidadesPorPaquete,
-            cantidad_total: unidadesTotales(l),
-            costo_unitario_usd: costoUsdDeLinea(l),
-            margen_aplicado: l.margen_aplicado,
-            precio_venta_bs: precioBsDeLinea(l),
-            aplica_iva: l.aplicaIva,
-            tasa_iva_aplicada: l.tasaIva,
-            aplica_descuento: l.aplicaDescuento,
-            descuento_aplicado: l.descuentoPct,
-          })),
-        },
-      });
+      // queda nada a medias. Editar una factura existente es "deshacer y
+      // volver a cargar" por debajo, con el mismo chequeo de elegibilidad
+      // que "eliminar".
+      if (editandoFacturaId) {
+        await invoke("editar_factura_compra", { facturaId: editandoFacturaId, input });
+      } else {
+        await invoke("guardar_factura_compra", { input });
+      }
     } catch (e) {
       setMensaje(`No se pudo guardar la factura: ${String(e)}`);
       setGuardando(false);
@@ -556,6 +644,7 @@ export default function Compras({
     setUltimaFactura(numeroFactura);
     setLineas([]);
     setNumeroFactura("");
+    setEditandoFacturaId(null);
     await cargarFacturas();
   }
 
@@ -905,6 +994,15 @@ export default function Compras({
       <div className="seccion-ancha">
       <div className="card">
         <h2>Líneas de la factura ({lineas.length})</h2>
+        {editandoFacturaId && (
+          <p className="aviso-credito">
+            ✎ Editando la factura <strong>{numeroFactura}</strong> — al guardar se reemplazan sus
+            líneas y se recalcula el stock.{" "}
+            <button type="button" className="link-btn" onClick={cancelarEdicionFactura}>
+              cancelar edición
+            </button>
+          </p>
+        )}
         <p className="hint">
           Todos los valores se editan directo en su casilla — cámbialos si algo salió mal (sobre
           todo al escanear con IA) o déjalos tal cual si están correctos.
@@ -1087,14 +1185,19 @@ export default function Compras({
         </div>
 
         <button className="cobrar-btn" onClick={guardarFactura} disabled={guardando}>
-          {guardando ? "Guardando…" : "Guardar factura"}
+          {guardando ? "Guardando…" : editandoFacturaId ? "Guardar cambios de la factura" : "Guardar factura"}
         </button>
       </div>
       </div>
 
       <div className="card">
         <h2>Facturas registradas</h2>
-        <p className="hint">Últimas {facturas.length} facturas de proveedor. Abre una para ver el detalle de productos comprados.</p>
+        <p className="hint">
+          Últimas {facturas.length} facturas de proveedor. Abre una para ver el detalle de
+          productos comprados. Solo se puede editar o eliminar una factura mientras nada de su
+          stock se haya vendido y no tenga pagos registrados al proveedor — si no, la corrección
+          segura es un ajuste de stock manual en la pestaña Movimientos.
+        </p>
         <div style={{ overflowX: "auto" }}>
           <table>
             <thead>
@@ -1126,6 +1229,20 @@ export default function Compras({
                       <button className="link-btn" onClick={() => toggleDetalleFactura(f.id)}>
                         {facturaDetalleAbierta === f.id ? "ocultar detalle" : "ver detalle"}
                       </button>
+                      {f.editable ? (
+                        <>
+                          <button className="link-btn" onClick={() => cargarFacturaParaEditar(f)}>
+                            editar
+                          </button>
+                          <button className="link-btn link-btn-danger" onClick={() => eliminarFactura(f)}>
+                            eliminar
+                          </button>
+                        </>
+                      ) : (
+                        <span className="hint" style={{ margin: 0 }}>
+                          ya no editable
+                        </span>
+                      )}
                     </td>
                   </tr>
                   {facturaDetalleAbierta === f.id && (

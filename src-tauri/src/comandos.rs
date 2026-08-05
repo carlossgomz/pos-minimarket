@@ -35,16 +35,23 @@ async fn en_linea(app: &tauri::AppHandle) -> bool {
 /// Si la cantidad pedida supera lo que queda en lotes (sobreventa), se
 /// permite igual — mismo criterio tolerante que ya tenía el sistema antes
 /// de los lotes (la UI ya avisa "stock bajo" antes de llegar acá).
+///
+/// Devuelve el costo USD total de lo consumido (suma de cada porción por
+/// el costo de SU lote) — lo usa `desglosar_producto_interna` para saber a
+/// qué costo real se está partiendo el paquete, en vez de asumir el costo
+/// "actual" del producto (que puede no ser el del lote que se está
+/// vendiendo si hay varios lotes en cola).
 async fn consumir_stock_fifo(
     tx: &libsql::Transaction,
     producto_id: &str,
     cantidad: f64,
-) -> Result<(), String> {
+) -> Result<f64, String> {
     let mut restante = cantidad;
+    let mut costo_total = 0.0;
     while restante > 0.0001 {
         let fila = tx
             .query(
-                "SELECT id, cantidad_restante FROM lotes_producto
+                "SELECT id, cantidad_restante, costo_unitario_usd FROM lotes_producto
                  WHERE producto_id = ?1 AND cantidad_restante > 0
                  ORDER BY creado_at ASC, rowid ASC LIMIT 1",
                 libsql::params![producto_id.to_string()],
@@ -57,6 +64,7 @@ async fn consumir_stock_fifo(
         let Some(fila) = fila else { break };
         let lote_id: String = fila.get(0).map_err(|e| e.to_string())?;
         let disponible: f64 = fila.get(1).map_err(|e| e.to_string())?;
+        let costo_lote: f64 = fila.get(2).map_err(|e| e.to_string())?;
         let consumido = restante.min(disponible);
 
         tx.execute(
@@ -66,9 +74,21 @@ async fn consumir_stock_fifo(
         .await
         .map_err(|e| e.to_string())?;
 
+        costo_total += consumido * costo_lote;
         restante -= consumido;
     }
 
+    actualizar_costo_vigente(tx, producto_id).await?;
+
+    Ok(costo_total)
+}
+
+/// Apunta `productos.costo_actual_usd`/`margen_porcentaje` al lote más
+/// viejo que todavía tenga stock (o los deja como estaban si ya no queda
+/// ninguno — el stock en 0 hace irrelevante ese valor). Compartida entre
+/// `consumir_stock_fifo` (tras una venta/salida) y
+/// `revertir_factura_compra_interna` (tras deshacer una compra).
+async fn actualizar_costo_vigente(tx: &libsql::Transaction, producto_id: &str) -> Result<(), String> {
     let siguiente = tx
         .query(
             "SELECT costo_unitario_usd, margen_porcentaje FROM lotes_producto
@@ -154,6 +174,11 @@ pub async fn ejecutar_desde_cola(
                 serde_json::from_str(payload_json).map_err(|e| e.to_string())?;
             registrar_consumo_interno_interna(conn, &input).await?;
         }
+        "desglosar_producto" => {
+            let input: DesglosarProductoInput =
+                serde_json::from_str(payload_json).map_err(|e| e.to_string())?;
+            desglosar_producto_interna(conn, &input).await?;
+        }
         otro => return Err(format!("Comando desconocido en la cola: {otro}")),
     }
     Ok(())
@@ -179,6 +204,7 @@ pub struct ConfirmarVentaInput {
     fecha_hora: String,
     cliente_nombre: Option<String>,
     cliente_cedula: Option<String>,
+    cliente_direccion: Option<String>,
     vendedor_id: Option<String>,
     vendedor_nombre: Option<String>,
     tasa_cambio_dia: f64,
@@ -246,14 +272,15 @@ async fn confirmar_venta_interna(
     let numero_ticket = format!("{prefijo}-{numero:06}");
 
     tx.execute(
-        "INSERT INTO ventas (id, numero_ticket, fecha_hora, cliente_nombre, cliente_cedula, vendedor_id, vendedor_nombre, tasa_cambio_dia, subtotal_bs, iva_bs, total_bs, estado, monto_pendiente_usd)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+        "INSERT INTO ventas (id, numero_ticket, fecha_hora, cliente_nombre, cliente_cedula, cliente_direccion, vendedor_id, vendedor_nombre, tasa_cambio_dia, subtotal_bs, iva_bs, total_bs, estado, monto_pendiente_usd)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
         libsql::params![
             input.id.clone(),
             numero_ticket.clone(),
             input.fecha_hora.clone(),
             input.cliente_nombre.clone(),
             input.cliente_cedula.clone(),
+            input.cliente_direccion.clone(),
             input.vendedor_id.clone(),
             input.vendedor_nombre.clone(),
             input.tasa_cambio_dia,
@@ -451,6 +478,194 @@ pub async fn ajustar_stock(app: tauri::AppHandle, input: AjustarStockInput) -> R
     let conn_cache = cache.conectar().await?;
     ajustar_stock_interna(&conn_cache, &input).await?;
     Ok(AjustarStockOutput { sin_conexion: true })
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct DesglosarProductoInput {
+    producto_origen_id: String,
+    producto_destino_id: String,
+    /// Cuántas unidades del producto origen se rompen (ej. 1 paquete).
+    cantidad_origen: f64,
+    /// Cuántas unidades del producto destino se generan (ej. 20
+    /// cigarrillos) — no tiene que ser un múltiplo "redondo", lo decide
+    /// quien hace el desglose.
+    unidades_generadas: f64,
+    motivo: String,
+    fecha_hora: String,
+}
+
+/// Convierte stock de un producto (ej. una caja de cigarrillos) en stock
+/// de OTRO producto del catálogo (ej. cigarrillos sueltos, con su propio
+/// código de barras) — el caso típico es vender por unidad algo que se
+/// compra empaquetado. Es una SALIDA del origen y una ENTRADA al destino
+/// en una sola transacción atómica: el origen se descuenta por FIFO (con
+/// el costo real del lote que se está partiendo) y ese costo, dividido
+/// entre las unidades generadas, es el costo del lote nuevo del destino —
+/// así la ganancia de vender por unidad queda calculada correctamente en
+/// vez de heredar a ciegas el costo que ya tenía el destino.
+async fn desglosar_producto_interna(conn: &libsql::Connection, input: &DesglosarProductoInput) -> Result<(), String> {
+    if input.cantidad_origen <= 0.0 {
+        return Err("La cantidad a desglosar debe ser mayor a 0.".to_string());
+    }
+    if input.unidades_generadas <= 0.0 {
+        return Err("Las unidades generadas deben ser mayor a 0.".to_string());
+    }
+    if input.producto_origen_id == input.producto_destino_id {
+        return Err("El producto de origen y el de destino no pueden ser el mismo.".to_string());
+    }
+    let motivo = input.motivo.trim();
+    let motivo = if motivo.is_empty() { "Desglose" } else { motivo };
+
+    let tx = conn.transaction().await.map_err(|e| e.to_string())?;
+
+    let existe_destino = tx
+        .query(
+            "SELECT margen_porcentaje FROM productos WHERE id = ?1",
+            libsql::params![input.producto_destino_id.clone()],
+        )
+        .await
+        .map_err(|e| e.to_string())?
+        .next()
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "El producto de destino no existe.".to_string())?;
+    let margen_destino: Option<f64> = existe_destino.get(0).map_err(|e| e.to_string())?;
+
+    // Respaldo para productos sin lotes todavía (ej. dados de alta desde el
+    // formulario rápido de Inventario, que no crea lote) — sin esto,
+    // consumir_stock_fifo no encuentra nada que descontar y el costo del
+    // desglose saldría en 0, como si el producto no costara nada.
+    let costo_actual_origen: f64 = tx
+        .query(
+            "SELECT costo_actual_usd FROM productos WHERE id = ?1",
+            libsql::params![input.producto_origen_id.clone()],
+        )
+        .await
+        .map_err(|e| e.to_string())?
+        .next()
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "El producto de origen no existe.".to_string())?
+        .get(0)
+        .map_err(|e| e.to_string())?;
+
+    tx.execute(
+        "UPDATE productos
+         SET stock_actual = stock_actual - ?1,
+             activo = CASE WHEN stock_actual - ?1 <= 0 THEN 0 ELSE activo END
+         WHERE id = ?2",
+        libsql::params![input.cantidad_origen, input.producto_origen_id.clone()],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let costo_total_origen = consumir_stock_fifo(&tx, &input.producto_origen_id, input.cantidad_origen).await?;
+    let costo_total_origen = if costo_total_origen.abs() < 0.0000001 {
+        costo_actual_origen * input.cantidad_origen
+    } else {
+        costo_total_origen
+    };
+    let costo_unitario_destino = costo_total_origen / input.unidades_generadas;
+
+    let tenia_stock_vigente_destino: i64 = tx
+        .query(
+            "SELECT COUNT(*) FROM lotes_producto WHERE producto_id = ?1 AND cantidad_restante > 0",
+            libsql::params![input.producto_destino_id.clone()],
+        )
+        .await
+        .map_err(|e| e.to_string())?
+        .next()
+        .await
+        .map_err(|e| e.to_string())?
+        .map(|f| f.get::<i64>(0).unwrap_or(0))
+        .unwrap_or(0);
+
+    tx.execute(
+        "INSERT INTO lotes_producto (id, producto_id, costo_unitario_usd, margen_porcentaje, cantidad_inicial, cantidad_restante, factura_compra_id)
+         VALUES (lower(hex(randomblob(16))), ?1, ?2, ?3, ?4, ?4, NULL)",
+        libsql::params![
+            input.producto_destino_id.clone(),
+            costo_unitario_destino,
+            margen_destino.unwrap_or(0.0),
+            input.unidades_generadas,
+        ],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    if tenia_stock_vigente_destino == 0 {
+        tx.execute(
+            "UPDATE productos SET costo_actual_usd = ?1, margen_porcentaje = ?2 WHERE id = ?3",
+            libsql::params![costo_unitario_destino, margen_destino.unwrap_or(0.0), input.producto_destino_id.clone()],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+
+    tx.execute(
+        "UPDATE productos
+         SET stock_actual = stock_actual + ?1,
+             activo = 1
+         WHERE id = ?2",
+        libsql::params![input.unidades_generadas, input.producto_destino_id.clone()],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let referencia = Uuid::new_v4().simple().to_string();
+
+    tx.execute(
+        "INSERT INTO movimientos_inventario (id, producto_id, tipo, cantidad, motivo, referencia, created_at)
+         VALUES (lower(hex(randomblob(16))), ?1, 'SALIDA', ?2, ?3, ?4, ?5)",
+        libsql::params![
+            input.producto_origen_id.clone(),
+            input.cantidad_origen,
+            format!("Desglose: {motivo}"),
+            referencia.clone(),
+            input.fecha_hora.clone(),
+        ],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    tx.execute(
+        "INSERT INTO movimientos_inventario (id, producto_id, tipo, cantidad, motivo, referencia, created_at)
+         VALUES (lower(hex(randomblob(16))), ?1, 'ENTRADA', ?2, ?3, ?4, ?5)",
+        libsql::params![
+            input.producto_destino_id.clone(),
+            input.unidades_generadas,
+            format!("Desglose: {motivo}"),
+            referencia,
+            input.fecha_hora.clone(),
+        ],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    tx.commit().await.map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+pub struct DesglosarProductoOutput {
+    sin_conexion: bool,
+}
+
+#[tauri::command]
+pub async fn desglosar_producto(app: tauri::AppHandle, input: DesglosarProductoInput) -> Result<DesglosarProductoOutput, String> {
+    if en_linea(&app).await {
+        let conn = conexion(&app).await?;
+        desglosar_producto_interna(&conn, &input).await?;
+        return Ok(DesglosarProductoOutput { sin_conexion: false });
+    }
+
+    let cache = app.state::<crate::offline::EstadoCache>();
+    crate::offline::encolar(&cache, "desglosar_producto", &input).await?;
+
+    let conn_cache = cache.conectar().await?;
+    desglosar_producto_interna(&conn_cache, &input).await?;
+    Ok(DesglosarProductoOutput { sin_conexion: true })
 }
 
 const EPS: f64 = 0.01;
@@ -837,48 +1052,19 @@ pub struct FacturaCompraOutput {
     monto_total_usd: f64,
 }
 
-/// Guarda una factura de compra completa: cabecera, creación de
-/// productos/categorías nuevas si hace falta, líneas de la factura,
-/// actualización de costo/margen/precio/stock de cada producto y su
-/// movimiento de inventario — todo en una sola transacción atómica, igual
-/// que confirmar_venta.
-#[tauri::command]
-pub async fn guardar_factura_compra(
-    app: tauri::AppHandle,
-    input: FacturaCompraInput,
-) -> Result<FacturaCompraOutput, String> {
-    if input.items.is_empty() {
-        return Err("Agrega al menos un producto a la factura.".to_string());
-    }
-
-    let mut monto_total_usd = 0.0;
-    for item in &input.items {
-        if item.cantidad_total <= 0.0 {
-            return Err(format!("\"{}\" tiene una cantidad inválida.", item.nombre));
-        }
-        monto_total_usd += item.costo_unitario_usd * item.cantidad_total;
-    }
-
-    let conn = conexion(&app).await?;
-    let tx = conn.transaction().await.map_err(|e| e.to_string())?;
-
-    tx.execute(
-        "INSERT INTO facturas_compra (id, proveedor_id, numero_factura, fecha, moneda, tasa_cambio_dia, monto_total_usd)
-         VALUES (?1,?2,?3,?4,?5,?6,?7)",
-        libsql::params![
-            input.id.clone(),
-            input.proveedor_id.clone(),
-            input.numero_factura.clone(),
-            input.fecha_hora.clone(),
-            input.moneda.clone(),
-            input.tasa_cambio_dia,
-            monto_total_usd,
-        ],
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-
-    for item in &input.items {
+/// Inserta las líneas de una factura de compra (productos nuevos si hace
+/// falta, la línea en `items_factura_compra`, el lote FIFO y el
+/// movimiento de inventario de cada una) contra una factura ya existente
+/// en `factura_id` — lo comparten `guardar_factura_compra` (factura recién
+/// creada) y `editar_factura_compra` (factura existente, tras deshacer sus
+/// líneas viejas con `revertir_factura_compra_interna`).
+async fn insertar_items_factura_interna(
+    tx: &libsql::Transaction,
+    factura_id: &str,
+    fecha_hora: &str,
+    items: &[ItemFacturaCompraInput],
+) -> Result<(), String> {
+    for item in items {
         if item.es_nuevo {
             let categoria_id: Option<String> = match item
                 .categoria_nombre
@@ -932,7 +1118,7 @@ pub async fn guardar_factura_compra(
             "INSERT INTO items_factura_compra (id, factura_compra_id, producto_id, cantidad, costo_unitario_usd, margen_aplicado, precio_venta_calculado, cajas, unidad_suelta, unidades_por_paquete, aplica_iva, tasa_iva_aplicada, aplica_descuento, descuento_aplicado)
              VALUES (lower(hex(randomblob(16))), ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             libsql::params![
-                input.id.clone(),
+                factura_id.to_string(),
                 item.producto_id.clone(),
                 item.cantidad_total,
                 item.costo_unitario_usd,
@@ -979,7 +1165,7 @@ pub async fn guardar_factura_compra(
                 item.costo_unitario_usd,
                 item.margen_aplicado,
                 item.cantidad_total,
-                input.id.clone(),
+                factura_id.to_string(),
             ],
         )
         .await
@@ -1019,11 +1205,240 @@ pub async fn guardar_factura_compra(
         tx.execute(
             "INSERT INTO movimientos_inventario (id, producto_id, tipo, cantidad, motivo, referencia, created_at)
              VALUES (lower(hex(randomblob(16))), ?1, 'ENTRADA', ?2, 'Compra a proveedor', ?3, ?4)",
-            libsql::params![item.producto_id.clone(), item.cantidad_total, input.id.clone(), input.fecha_hora.clone()],
+            libsql::params![item.producto_id.clone(), item.cantidad_total, factura_id.to_string(), fecha_hora.to_string()],
         )
         .await
         .map_err(|e| e.to_string())?;
     }
+
+    Ok(())
+}
+
+/// Guarda una factura de compra completa: cabecera, creación de
+/// productos/categorías nuevas si hace falta, líneas de la factura,
+/// actualización de costo/margen/precio/stock de cada producto y su
+/// movimiento de inventario — todo en una sola transacción atómica, igual
+/// que confirmar_venta.
+#[tauri::command]
+pub async fn guardar_factura_compra(
+    app: tauri::AppHandle,
+    input: FacturaCompraInput,
+) -> Result<FacturaCompraOutput, String> {
+    if input.items.is_empty() {
+        return Err("Agrega al menos un producto a la factura.".to_string());
+    }
+
+    let mut monto_total_usd = 0.0;
+    for item in &input.items {
+        if item.cantidad_total <= 0.0 {
+            return Err(format!("\"{}\" tiene una cantidad inválida.", item.nombre));
+        }
+        monto_total_usd += item.costo_unitario_usd * item.cantidad_total;
+    }
+
+    let conn = conexion(&app).await?;
+    let tx = conn.transaction().await.map_err(|e| e.to_string())?;
+
+    tx.execute(
+        "INSERT INTO facturas_compra (id, proveedor_id, numero_factura, fecha, moneda, tasa_cambio_dia, monto_total_usd)
+         VALUES (?1,?2,?3,?4,?5,?6,?7)",
+        libsql::params![
+            input.id.clone(),
+            input.proveedor_id.clone(),
+            input.numero_factura.clone(),
+            input.fecha_hora.clone(),
+            input.moneda.clone(),
+            input.tasa_cambio_dia,
+            monto_total_usd,
+        ],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    insertar_items_factura_interna(&tx, &input.id, &input.fecha_hora, &input.items).await?;
+
+    tx.commit().await.map_err(|e| e.to_string())?;
+
+    Ok(FacturaCompraOutput { monto_total_usd })
+}
+
+/// Si devuelve `Some(motivo)`, la factura NO se puede editar ni eliminar
+/// (ya se vendió algo de su stock, o ya tiene pagos al proveedor
+/// registrados) — en ese caso, la corrección segura es un ajuste de stock
+/// manual (Movimientos), no reescribir historia ya en movimiento.
+async fn factura_compra_bloqueo(tx: &libsql::Transaction, factura_id: &str) -> Result<Option<String>, String> {
+    let fila = tx
+        .query(
+            "SELECT monto_pagado_usd FROM facturas_compra WHERE id = ?1",
+            libsql::params![factura_id.to_string()],
+        )
+        .await
+        .map_err(|e| e.to_string())?
+        .next()
+        .await
+        .map_err(|e| e.to_string())?;
+    let Some(fila) = fila else {
+        return Ok(Some("La factura no existe.".to_string()));
+    };
+    let monto_pagado: f64 = fila.get(0).map_err(|e| e.to_string())?;
+    if monto_pagado > 0.0001 {
+        return Ok(Some(
+            "Esta factura ya tiene pagos registrados al proveedor — no se puede editar ni eliminar.".to_string(),
+        ));
+    }
+
+    let vendido: i64 = tx
+        .query(
+            "SELECT COUNT(*) FROM lotes_producto
+             WHERE factura_compra_id = ?1 AND cantidad_restante < cantidad_inicial - 0.0001",
+            libsql::params![factura_id.to_string()],
+        )
+        .await
+        .map_err(|e| e.to_string())?
+        .next()
+        .await
+        .map_err(|e| e.to_string())?
+        .map(|f| f.get::<i64>(0).unwrap_or(0))
+        .unwrap_or(0);
+    if vendido > 0 {
+        return Ok(Some(
+            "Ya se vendió stock que llegó con esta factura — no se puede editar ni eliminar. Usa un ajuste de stock (pestaña Movimientos) para corregirlo.".to_string(),
+        ));
+    }
+
+    Ok(None)
+}
+
+/// Deshace por completo el efecto de una factura de compra sobre el
+/// inventario: descuenta de `productos.stock_actual` lo que había sumado,
+/// borra sus lotes y sus movimientos de ENTRADA, y borra sus líneas —
+/// dejando la cabecera de `facturas_compra` intacta para que
+/// `editar_factura_compra` la reutilice, o lista para borrarla en
+/// `eliminar_factura_compra`. Solo se llama tras confirmar con
+/// `factura_compra_bloqueo` que nada de esto se vendió ni se pagó todavía.
+async fn revertir_factura_compra_interna(tx: &libsql::Transaction, factura_id: &str) -> Result<(), String> {
+    let mut filas = tx
+        .query(
+            "SELECT producto_id, cantidad FROM items_factura_compra WHERE factura_compra_id = ?1",
+            libsql::params![factura_id.to_string()],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut productos_afectados: Vec<String> = Vec::new();
+    while let Some(fila) = filas.next().await.map_err(|e| e.to_string())? {
+        let producto_id: String = fila.get(0).map_err(|e| e.to_string())?;
+        let cantidad: f64 = fila.get(1).map_err(|e| e.to_string())?;
+
+        tx.execute(
+            "UPDATE productos SET stock_actual = stock_actual - ?1 WHERE id = ?2",
+            libsql::params![cantidad, producto_id.clone()],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+        productos_afectados.push(producto_id);
+    }
+    drop(filas);
+
+    tx.execute(
+        "DELETE FROM lotes_producto WHERE factura_compra_id = ?1",
+        libsql::params![factura_id.to_string()],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    tx.execute(
+        "DELETE FROM movimientos_inventario WHERE referencia = ?1 AND tipo = 'ENTRADA'",
+        libsql::params![factura_id.to_string()],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    tx.execute(
+        "DELETE FROM items_factura_compra WHERE factura_compra_id = ?1",
+        libsql::params![factura_id.to_string()],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    for producto_id in productos_afectados {
+        actualizar_costo_vigente(tx, &producto_id).await?;
+    }
+
+    Ok(())
+}
+
+/// Elimina por completo una factura de compra — solo si todavía no se
+/// vendió nada de lo que trajo ni se le pagó nada al proveedor (ver
+/// factura_compra_bloqueo). El stock que había sumado se resta de nuevo.
+#[tauri::command]
+pub async fn eliminar_factura_compra(app: tauri::AppHandle, factura_id: String) -> Result<(), String> {
+    let conn = conexion(&app).await?;
+    let tx = conn.transaction().await.map_err(|e| e.to_string())?;
+
+    if let Some(motivo) = factura_compra_bloqueo(&tx, &factura_id).await? {
+        return Err(motivo);
+    }
+
+    revertir_factura_compra_interna(&tx, &factura_id).await?;
+
+    tx.execute("DELETE FROM facturas_compra WHERE id = ?1", libsql::params![factura_id.clone()])
+        .await
+        .map_err(|e| e.to_string())?;
+
+    tx.commit().await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Reemplaza cabecera y líneas de una factura de compra existente — solo
+/// si todavía es elegible (ver factura_compra_bloqueo). Por debajo es
+/// "deshacer todo y volver a cargar", en una sola transacción atómica, para
+/// no arrastrar lotes/movimientos inconsistentes de la versión vieja.
+#[tauri::command]
+pub async fn editar_factura_compra(
+    app: tauri::AppHandle,
+    factura_id: String,
+    input: FacturaCompraInput,
+) -> Result<FacturaCompraOutput, String> {
+    if input.items.is_empty() {
+        return Err("Agrega al menos un producto a la factura.".to_string());
+    }
+    let mut monto_total_usd = 0.0;
+    for item in &input.items {
+        if item.cantidad_total <= 0.0 {
+            return Err(format!("\"{}\" tiene una cantidad inválida.", item.nombre));
+        }
+        monto_total_usd += item.costo_unitario_usd * item.cantidad_total;
+    }
+
+    let conn = conexion(&app).await?;
+    let tx = conn.transaction().await.map_err(|e| e.to_string())?;
+
+    if let Some(motivo) = factura_compra_bloqueo(&tx, &factura_id).await? {
+        return Err(motivo);
+    }
+
+    revertir_factura_compra_interna(&tx, &factura_id).await?;
+
+    tx.execute(
+        "UPDATE facturas_compra
+         SET proveedor_id = ?1, numero_factura = ?2, fecha = ?3, moneda = ?4, tasa_cambio_dia = ?5, monto_total_usd = ?6
+         WHERE id = ?7",
+        libsql::params![
+            input.proveedor_id.clone(),
+            input.numero_factura.clone(),
+            input.fecha_hora.clone(),
+            input.moneda.clone(),
+            input.tasa_cambio_dia,
+            monto_total_usd,
+            factura_id.clone(),
+        ],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    insertar_items_factura_interna(&tx, &factura_id, &input.fecha_hora, &input.items).await?;
 
     tx.commit().await.map_err(|e| e.to_string())?;
 

@@ -66,7 +66,10 @@ pub fn run() {
             comandos::registrar_abono_cliente_total,
             comandos::registrar_pago_proveedor,
             comandos::registrar_consumo_interno,
-            comandos::guardar_factura_compra
+            comandos::guardar_factura_compra,
+            comandos::editar_factura_compra,
+            comandos::eliminar_factura_compra,
+            comandos::desglosar_producto
         ])
         .run(tauri::generate_context!())
         .expect("error al iniciar la aplicación");

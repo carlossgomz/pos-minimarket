@@ -4,6 +4,8 @@ import { getDb } from "../db";
 import { precioVentaBsHoy, precioVentaUsd } from "../precios";
 import { fechaHoraVenezuela } from "../fecha";
 import {
+  AporteCapitalExterno,
+  AvanceEfectivo,
   Cliente,
   ConfigRow,
   LineaCarrito,
@@ -42,6 +44,7 @@ type TicketAbierto = {
   clienteId: string | null;
   clienteNombre: string;
   clienteCedula: string;
+  clienteDireccion: string | null;
   clienteCreditoAutorizado: boolean;
   // Deuda que este cliente ya arrastraba de ventas anteriores (no la de
   // este ticket) — se consulta al seleccionarlo, para poder avisarle al
@@ -61,6 +64,7 @@ function ticketVacio(): TicketAbierto {
     clienteId: null,
     clienteNombre: "",
     clienteCedula: "",
+    clienteDireccion: null,
     clienteCreditoAutorizado: false,
     deudaPendienteUsd: 0,
     avisoCreditoResuelto: true,
@@ -115,6 +119,16 @@ export default function Venta({
   const [mensaje, setMensaje] = useState<string | null>(null);
   const [guardando, setGuardando] = useState(false);
 
+  // Último click antes de registrar la venta: se muestra un resumen
+  // (productos, cantidades, total, método de pago) para que la caja
+  // confirme que no hubo un error de click por trabajar rápido — la venta
+  // recién se guarda cuando se acepta este resumen (ver ejecutarVentaConfirmada).
+  const [confirmacionVenta, setConfirmacionVenta] = useState<{
+    pagosReales: LineaPago[];
+    esCredito: boolean;
+    montoPendienteUsd: number | null;
+  } | null>(null);
+
   // Cuando se escanea/escribe un código que no coincide con ningún
   // producto, puede ser un producto nuevo (creado desde una factura de
   // compra) al que todavía no se le asignó su código de barras real —
@@ -139,6 +153,31 @@ export default function Venta({
   const [guardandoConsumo, setGuardandoConsumo] = useState(false);
   const [mensajeConsumo, setMensajeConsumo] = useState<string | null>(null);
 
+  // --- Avances de efectivo del día (el cliente pide efectivo, se le cobra
+  // un monto mayor por otro método — la diferencia es la comisión). Cada
+  // uno se guarda al momento, no se acumula como el consumo interno,
+  // porque es un cambio de efectivo real que ya ocurrió en caja.
+  const [mostrarAvances, setMostrarAvances] = useState(false);
+  const [avancesHoy, setAvancesHoy] = useState<AvanceEfectivo[]>([]);
+  const [avanceMontoEfectivo, setAvanceMontoEfectivo] = useState("");
+  const [avanceMontoCobrado, setAvanceMontoCobrado] = useState("");
+  const [avanceMetodoCobro, setAvanceMetodoCobro] = useState<MetodoPago>("PUNTO_VENTA");
+  const [avanceFuente, setAvanceFuente] = useState<"CAJA" | "CAPITAL_EXTERIOR">("CAJA");
+  const [avanceReferencia, setAvanceReferencia] = useState("");
+  const [guardandoAvance, setGuardandoAvance] = useState(false);
+  const [mensajeAvance, setMensajeAvance] = useState<string | null>(null);
+
+  // Saldo del capital externo para avances: no es "de hoy", es acumulado
+  // (alguien deposita un monto y se va gastando en avances a lo largo de
+  // varios días hasta que se agota o se repone) — por eso se consulta
+  // aparte, sin filtrar por fecha.
+  const [aportesCapitalExterno, setAportesCapitalExterno] = useState<AporteCapitalExterno[]>([]);
+  const [saldoCapitalExterno, setSaldoCapitalExterno] = useState(0);
+  const [montoAporteNuevo, setMontoAporteNuevo] = useState("");
+  const [notaAporteNuevo, setNotaAporteNuevo] = useState("");
+  const [guardandoAporte, setGuardandoAporte] = useState(false);
+  const [mensajeAporte, setMensajeAporte] = useState<string | null>(null);
+
   const [recibo, setRecibo] = useState<null | {
     numero: string;
     fechaHora: string;
@@ -148,6 +187,7 @@ export default function Venta({
     subtotal: number;
     total: number;
     cliente: string;
+    clienteDireccion: string | null;
     tasa: number;
     sinConexion: boolean;
   }>(null);
@@ -341,11 +381,12 @@ export default function Venta({
     agregarAConsumo(rows[0]);
   }
 
+  // Igual criterio que cambiarCantidad del carrito de venta: no se quita la
+  // línea sola al pasar por 0 (productos por peso escriben "0.3" pasando
+  // por un "0" intermedio) — solo se quita con el botón "quitar".
   function cambiarCantidadConsumo(producto_id: string, cantidad: number) {
     setConsumoInterno((prev) =>
-      prev
-        .map((l) => (l.producto_id === producto_id ? { ...l, cantidad: Math.max(0, cantidad) } : l))
-        .filter((l) => l.cantidad > 0)
+      prev.map((l) => (l.producto_id === producto_id ? { ...l, cantidad: Math.max(0, cantidad) } : l))
     );
   }
 
@@ -405,12 +446,126 @@ export default function Venta({
     );
   }
 
+  async function cargarAvancesHoy() {
+    const db = await getDb();
+    const hoy = fechaHoraVenezuela().slice(0, 10);
+    const rows = await db.select<AvanceEfectivo[]>(
+      "SELECT * FROM avances_efectivo WHERE date(created_at) = $1 ORDER BY created_at DESC",
+      [hoy]
+    );
+    setAvancesHoy(rows);
+  }
+
+  async function cargarCapitalExterno() {
+    const db = await getDb();
+    const aportes = await db.select<AporteCapitalExterno[]>(
+      "SELECT * FROM aportes_capital_externo ORDER BY created_at DESC LIMIT 20"
+    );
+    setAportesCapitalExterno(aportes);
+    const [{ total_aportado }] = await db.select<{ total_aportado: number }[]>(
+      "SELECT COALESCE(SUM(monto_bs), 0) as total_aportado FROM aportes_capital_externo"
+    );
+    const [{ total_usado }] = await db.select<{ total_usado: number }[]>(
+      "SELECT COALESCE(SUM(monto_efectivo_bs), 0) as total_usado FROM avances_efectivo WHERE fuente_efectivo = 'CAPITAL_EXTERIOR'"
+    );
+    setSaldoCapitalExterno(total_aportado - total_usado);
+  }
+
+  useEffect(() => {
+    if (visible && mostrarAvances) {
+      cargarAvancesHoy();
+      cargarCapitalExterno();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, mostrarAvances]);
+
+  async function registrarAporteCapitalExterno() {
+    setMensajeAporte(null);
+    const monto = Number(montoAporteNuevo);
+    if (!monto || monto <= 0) {
+      setMensajeAporte("El monto debe ser mayor a 0.");
+      return;
+    }
+    setGuardandoAporte(true);
+    const db = await getDb();
+    try {
+      await db.execute("INSERT INTO aportes_capital_externo (id, monto_bs, nota, usuario, created_at) VALUES ($1,$2,$3,$4,$5)", [
+        crypto.randomUUID(),
+        monto,
+        notaAporteNuevo.trim() || null,
+        vendedor?.nombre ?? null,
+        fechaHoraVenezuela(),
+      ]);
+    } catch (e) {
+      setMensajeAporte(`No se pudo registrar el aporte: ${String(e)}`);
+      setGuardandoAporte(false);
+      return;
+    }
+    setMontoAporteNuevo("");
+    setNotaAporteNuevo("");
+    setGuardandoAporte(false);
+    await cargarCapitalExterno();
+  }
+
+  async function registrarAvance() {
+    setMensajeAvance(null);
+    const montoEfectivo = Number(avanceMontoEfectivo);
+    const montoCobrado = Number(avanceMontoCobrado);
+    if (!montoEfectivo || montoEfectivo <= 0) {
+      setMensajeAvance("El efectivo entregado debe ser mayor a 0.");
+      return;
+    }
+    if (!montoCobrado || montoCobrado <= 0) {
+      setMensajeAvance("El monto cobrado debe ser mayor a 0.");
+      return;
+    }
+    if (montoCobrado < montoEfectivo) {
+      setMensajeAvance("El monto cobrado no puede ser menor al efectivo entregado.");
+      return;
+    }
+    if (avanceFuente === "CAPITAL_EXTERIOR" && montoEfectivo > saldoCapitalExterno + 0.01) {
+      const continuar = confirm(
+        `El capital externo disponible es Bs ${saldoCapitalExterno.toFixed(2)} — este avance usa Bs ${montoEfectivo.toFixed(2)}, más de lo que queda. ¿Registrarlo igual?`
+      );
+      if (!continuar) return;
+    }
+    setGuardandoAvance(true);
+    const db = await getDb();
+    try {
+      await db.execute(
+        `INSERT INTO avances_efectivo (id, monto_efectivo_bs, monto_cobrado_bs, metodo_cobro, fuente_efectivo, referencia, usuario, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [
+          crypto.randomUUID(),
+          montoEfectivo,
+          montoCobrado,
+          avanceMetodoCobro,
+          avanceFuente,
+          avanceReferencia.trim() || null,
+          vendedor?.nombre ?? null,
+          fechaHoraVenezuela(),
+        ]
+      );
+    } catch (e) {
+      setMensajeAvance(`No se pudo registrar el avance: ${String(e)}`);
+      setGuardandoAvance(false);
+      return;
+    }
+    setAvanceMontoEfectivo("");
+    setAvanceMontoCobrado("");
+    setAvanceReferencia("");
+    setGuardandoAvance(false);
+    await cargarAvancesHoy();
+    if (avanceFuente === "CAPITAL_EXTERIOR") await cargarCapitalExterno();
+  }
+
   async function seleccionarCliente(c: Cliente) {
     const ticketId = activo.id;
     actualizarActivo({
       clienteId: c.id,
       clienteNombre: c.nombre,
       clienteCedula: c.cedula,
+      clienteDireccion: c.direccion,
       clienteCreditoAutorizado: !!c.credito_autorizado,
       deudaPendienteUsd: 0,
       avisoCreditoResuelto: true,
@@ -444,6 +599,7 @@ export default function Venta({
       clienteId: null,
       clienteNombre: "",
       clienteCedula: "",
+      clienteDireccion: null,
       clienteCreditoAutorizado: false,
       deudaPendienteUsd: 0,
       avisoCreditoResuelto: true,
@@ -469,7 +625,15 @@ export default function Venta({
       setMensaje(`No se pudo crear el cliente (¿cédula repetida?): ${String(e)}`);
       return;
     }
-    seleccionarCliente({ id, nombre: clienteNuevoNombre.trim(), cedula, telefono: null, credito_autorizado: 0 });
+    seleccionarCliente({
+      id,
+      nombre: clienteNuevoNombre.trim(),
+      cedula,
+      telefono: null,
+      direccion: null,
+      cliente_app_id: null,
+      credito_autorizado: 0,
+    });
     setClienteNuevoNombre("");
   }
 
@@ -571,10 +735,14 @@ export default function Venta({
     }
   }
 
+  // No se quita la línea sola aunque quede en 0 — productos por peso (ej.
+  // 0.3kg) pasan por un "0" o un "0." intermedio mientras se escribe la
+  // cantidad, y sacarla de encima ahí mismo obligaría a buscar el producto
+  // de nuevo. Solo se quita con el botón "quitar" o "vaciar carrito".
   function cambiarCantidad(producto_id: string, cantidad: number) {
-    const nuevo = activo.carrito
-      .map((l) => (l.producto_id === producto_id ? { ...l, cantidad: Math.max(0, cantidad) } : l))
-      .filter((l) => l.cantidad > 0);
+    const nuevo = activo.carrito.map((l) =>
+      l.producto_id === producto_id ? { ...l, cantidad: Math.max(0, cantidad) } : l
+    );
     actualizarActivo({ carrito: nuevo });
   }
 
@@ -666,15 +834,34 @@ export default function Venta({
       return;
     }
 
-    setGuardando(true);
-    const id = crypto.randomUUID();
-    const fechaHora = fechaHoraVenezuela();
     const montoPendienteUsd = esCredito ? restanteBase / config.tasa_cambio_dia : null;
-
     const pagosReales = [...pagosBase];
     if (esCredito) {
       pagosReales.push({ metodo: "CREDITO", monto_bs: restanteBase });
     }
+
+    // No se guarda todavía — se muestra el resumen para que la caja
+    // confirme (ver ejecutarVentaConfirmada, que es quien de verdad llama
+    // a confirmar_venta).
+    setConfirmacionVenta({ pagosReales, esCredito, montoPendienteUsd });
+  }
+
+  function confirmarVenta() {
+    return procesarVenta(activo.pagos);
+  }
+
+  function cancelarConfirmacionVenta() {
+    setConfirmacionVenta(null);
+  }
+
+  async function ejecutarVentaConfirmada() {
+    if (!confirmacionVenta || guardando) return;
+    const { pagosReales, montoPendienteUsd, esCredito } = confirmacionVenta;
+    const carrito = activo.carrito;
+
+    setGuardando(true);
+    const id = crypto.randomUUID();
+    const fechaHora = fechaHoraVenezuela();
 
     let numeroTicket: string;
     let sinConexion: boolean;
@@ -690,6 +877,7 @@ export default function Venta({
           fecha_hora: fechaHora,
           cliente_nombre: activo.clienteNombre || null,
           cliente_cedula: activo.clienteCedula || null,
+          cliente_direccion: activo.clienteDireccion || null,
           vendedor_id: vendedor?.id ?? null,
           vendedor_nombre: vendedor?.nombre ?? null,
           tasa_cambio_dia: config.tasa_cambio_dia,
@@ -715,6 +903,7 @@ export default function Venta({
     } catch (e) {
       setMensaje(`No se pudo registrar la venta: ${String(e)}`);
       setGuardando(false);
+      setConfirmacionVenta(null);
       return;
     }
 
@@ -727,6 +916,7 @@ export default function Venta({
       subtotal,
       total,
       cliente: activo.clienteNombre ? `${activo.clienteNombre} (${activo.clienteCedula})` : "Consumidor final",
+      clienteDireccion: activo.clienteDireccion,
       tasa: config.tasa_cambio_dia,
       sinConexion,
     });
@@ -745,12 +935,9 @@ export default function Venta({
     setMontoNuevo("");
     setRefNueva("");
     setGuardando(false);
+    setConfirmacionVenta(null);
     onTasaVista();
     inputRef.current?.focus();
-  }
-
-  function confirmarVenta() {
-    return procesarVenta(activo.pagos);
   }
 
   // Cobro en un solo click: para el caso más común (un solo método cubre
@@ -781,6 +968,12 @@ export default function Venta({
           Vendedor: {recibo.vendedor}
           <br />
           Cliente: {recibo.cliente}
+          {recibo.clienteDireccion && (
+            <>
+              <br />
+              Dirección: {recibo.clienteDireccion}
+            </>
+          )}
         </p>
         <table>
           <thead>
@@ -1365,6 +1558,233 @@ export default function Venta({
           </>
         )}
       </div>
+
+      <div className="card">
+        <button type="button" className="consumo-interno-toggle" onClick={() => setMostrarAvances((v) => !v)}>
+          <h2 style={{ margin: 0 }}>
+            {mostrarAvances ? "▾" : "▸"} Avances de efectivo del día
+            {avancesHoy.length > 0 ? ` · ${avancesHoy.length}` : ""}
+          </h2>
+        </button>
+        <p className="hint" style={{ marginTop: 4, marginBottom: 0 }}>
+          El cliente pide efectivo y se le cobra un monto mayor por otro método — la diferencia es
+          la comisión del negocio. Esto se guarda al momento y afecta el cuadre de caja: sube el
+          esperado del método con el que se cobró, y baja el esperado de efectivo (sale de la caja
+          física sin importar la fuente). Un aporte de capital externo también sube el esperado de
+          efectivo, porque ese dinero entra a la misma caja.
+        </p>
+
+        {mostrarAvances && (
+          <>
+            <div className="card" style={{ background: "#f7f6f2" }}>
+              <div className="form-row" style={{ alignItems: "center", justifyContent: "space-between" }}>
+                <h2 style={{ margin: 0 }}>
+                  Capital externo disponible:{" "}
+                  <span className={saldoCapitalExterno <= 0 ? "restante-pendiente" : ""}>
+                    Bs {saldoCapitalExterno.toFixed(2)}
+                  </span>
+                </h2>
+              </div>
+              <p className="hint" style={{ marginTop: 4 }}>
+                Cuando entra dinero de fuera de la caja para financiar avances (ej. te depositan Bs
+                500), regístralo acá — el saldo baja solo cada vez que un avance sale de "Capital
+                externo".
+              </p>
+              <div className="form-row">
+                <input
+                  type="number"
+                  step="0.01"
+                  placeholder="Monto del aporte (Bs)"
+                  value={montoAporteNuevo}
+                  onChange={(e) => setMontoAporteNuevo(e.target.value)}
+                  style={{ maxWidth: 180 }}
+                />
+                <input
+                  placeholder="Nota (opcional)"
+                  value={notaAporteNuevo}
+                  onChange={(e) => setNotaAporteNuevo(e.target.value)}
+                />
+                <button type="button" onClick={registrarAporteCapitalExterno} disabled={guardandoAporte}>
+                  {guardandoAporte ? "Guardando…" : "Registrar aporte"}
+                </button>
+              </div>
+              {mensajeAporte && <p className="error">{mensajeAporte}</p>}
+              {aportesCapitalExterno.length > 0 && (
+                <ul className="lista-pagos">
+                  {aportesCapitalExterno.map((a) => (
+                    <li key={a.id}>
+                      {formatearFechaHora(a.created_at)} — Bs {a.monto_bs.toFixed(2)}
+                      {a.nota ? ` (${a.nota})` : ""}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="form-grid" style={{ marginTop: 14 }}>
+              <div className="campo">
+                <label>Efectivo entregado (Bs)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  placeholder="Ej. 300"
+                  value={avanceMontoEfectivo}
+                  onChange={(e) => setAvanceMontoEfectivo(e.target.value)}
+                />
+              </div>
+              <div className="campo">
+                <label>Monto cobrado (Bs)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  placeholder="Ej. 330"
+                  value={avanceMontoCobrado}
+                  onChange={(e) => setAvanceMontoCobrado(e.target.value)}
+                />
+              </div>
+              <div className="campo">
+                <label>Método de cobro</label>
+                <select value={avanceMetodoCobro} onChange={(e) => setAvanceMetodoCobro(e.target.value as MetodoPago)}>
+                  {METODOS_PAGO.filter((m) => m !== "EFECTIVO").map((m) => (
+                    <option key={m} value={m}>
+                      {m.split("_").join(" ")}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="campo">
+                <label>Efectivo de</label>
+                <select value={avanceFuente} onChange={(e) => setAvanceFuente(e.target.value as "CAJA" | "CAPITAL_EXTERIOR")}>
+                  <option value="CAJA">Esta caja</option>
+                  <option value="CAPITAL_EXTERIOR">Capital externo</option>
+                </select>
+              </div>
+              <div className="campo">
+                <label>Referencia (opcional)</label>
+                <input
+                  placeholder="Últimos dígitos, nombre..."
+                  value={avanceReferencia}
+                  onChange={(e) => setAvanceReferencia(e.target.value)}
+                />
+              </div>
+              <div className="campo-boton">
+                <button type="button" onClick={registrarAvance} disabled={guardandoAvance}>
+                  {guardandoAvance ? "Guardando…" : "Registrar avance"}
+                </button>
+              </div>
+            </div>
+            {avanceMontoEfectivo && avanceMontoCobrado && Number(avanceMontoCobrado) > Number(avanceMontoEfectivo) && (
+              <p className="hint">Comisión: Bs {(Number(avanceMontoCobrado) - Number(avanceMontoEfectivo)).toFixed(2)}</p>
+            )}
+            {mensajeAvance && <p className="error">{mensajeAvance}</p>}
+
+            <table>
+              <thead>
+                <tr>
+                  <th>Hora</th>
+                  <th>Efectivo</th>
+                  <th>Cobrado</th>
+                  <th>Comisión</th>
+                  <th>Método</th>
+                  <th>Origen</th>
+                  <th>Referencia</th>
+                </tr>
+              </thead>
+              <tbody>
+                {avancesHoy.map((a) => (
+                  <tr key={a.id}>
+                    <td>{a.created_at.split(" ")[1]?.slice(0, 5)}</td>
+                    <td>{a.monto_efectivo_bs.toFixed(2)}</td>
+                    <td>{a.monto_cobrado_bs.toFixed(2)}</td>
+                    <td>{(a.monto_cobrado_bs - a.monto_efectivo_bs).toFixed(2)}</td>
+                    <td>{a.metodo_cobro.split("_").join(" ")}</td>
+                    <td>{a.fuente_efectivo === "CAJA" ? "Esta caja" : "Capital externo"}</td>
+                    <td>{a.referencia ?? "—"}</td>
+                  </tr>
+                ))}
+                {avancesHoy.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className="empty">
+                      Sin avances registrados hoy.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+            {avancesHoy.length > 0 && (
+              <div className="totales">
+                <span>Efectivo entregado: Bs {avancesHoy.reduce((acc, a) => acc + a.monto_efectivo_bs, 0).toFixed(2)}</span>
+                <strong>
+                  Comisión del día: Bs{" "}
+                  {avancesHoy.reduce((acc, a) => acc + (a.monto_cobrado_bs - a.monto_efectivo_bs), 0).toFixed(2)}
+                </strong>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {confirmacionVenta && (
+        <div className="modal-fondo" onMouseDown={cancelarConfirmacionVenta}>
+          <div className="modal-caja" onMouseDown={(e) => e.stopPropagation()}>
+            <h2>Confirmar venta antes de registrarla</h2>
+            <p className="hint">
+              Revisa productos, cantidades y método de pago — al confirmar se descuenta el stock y
+              queda registrada.
+            </p>
+            <table>
+              <thead>
+                <tr>
+                  <th>Producto</th>
+                  <th>Cant.</th>
+                  <th>Precio Bs</th>
+                  <th>Subtotal Bs</th>
+                </tr>
+              </thead>
+              <tbody>
+                {activo.carrito.map((l) => (
+                  <tr key={l.producto_id}>
+                    <td>{l.nombre}</td>
+                    <td>{l.cantidad}</td>
+                    <td>{l.precio_unit_bs.toFixed(2)}</td>
+                    <td>{(l.precio_unit_bs * l.cantidad).toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p>
+              Cliente:{" "}
+              {activo.clienteNombre ? `${activo.clienteNombre} (${activo.clienteCedula})` : "Consumidor final"}
+              {activo.clienteDireccion ? ` — ${activo.clienteDireccion}` : ""}
+            </p>
+            <p>
+              Pago:{" "}
+              {confirmacionVenta.pagosReales
+                .map((p) => `${p.metodo.split("_").join(" ")} Bs ${p.monto_bs.toFixed(2)}`)
+                .join(" · ")}
+            </p>
+            <p className="ticket-total">
+              Total: Bs {total.toFixed(2)}{" "}
+              <span style={{ fontWeight: 400, fontSize: 13, color: "#5f5e5a" }}>
+                (USD {(total / config.tasa_cambio_dia).toFixed(2)})
+              </span>
+            </p>
+            {confirmacionVenta.esCredito && (
+              <p className="restante-pendiente">
+                Queda a crédito: USD {(confirmacionVenta.montoPendienteUsd ?? 0).toFixed(2)}
+              </p>
+            )}
+            <div className="form-row">
+              <button className="cobrar-btn" onClick={ejecutarVentaConfirmada} disabled={guardando}>
+                {guardando ? "Registrando…" : "✓ Confirmar y registrar"}
+              </button>
+              <button className="link-btn" onClick={cancelarConfirmacionVenta} disabled={guardando}>
+                cancelar, quiero revisar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

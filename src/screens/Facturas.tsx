@@ -6,6 +6,7 @@ import {
   FacturaVentaItemDetalle,
   FacturaVentaPagoDetalle,
   FacturaVentaResumen,
+  METODOS_PAGO,
 } from "../types";
 
 function hoyISO() {
@@ -52,7 +53,7 @@ export default function Facturas({ config }: { config: ConfigRow }) {
   async function abrirFactura(id: string) {
     const db = await getDb();
     const completa = await db.select<FacturaVentaCompleta[]>(
-      `SELECT id, numero_ticket, fecha_hora, cliente_nombre, cliente_cedula, vendedor_nombre,
+      `SELECT id, numero_ticket, fecha_hora, cliente_nombre, cliente_cedula, cliente_direccion, vendedor_nombre,
               tasa_cambio_dia, subtotal_bs, iva_bs, total_bs, estado, monto_pendiente_usd
        FROM ventas WHERE id = $1`,
       [id]
@@ -68,10 +69,24 @@ export default function Facturas({ config }: { config: ConfigRow }) {
     setItems(itemRows);
 
     const pagoRows = await db.select<FacturaVentaPagoDetalle[]>(
-      "SELECT metodo, monto_bs, referencia FROM pagos WHERE venta_id = $1",
+      "SELECT id, metodo, monto_bs, referencia FROM pagos WHERE venta_id = $1",
       [id]
     );
     setPagos(pagoRows);
+  }
+
+  // Corrige el método de pago (y la referencia) de una venta ya
+  // registrada — el caso típico es la caja que por un clic apurado marcó
+  // "punto de venta" cuando en realidad fue biopago. El monto no se toca
+  // acá: si hace falta cambiar montos, es una venta distinta, no un typo.
+  async function actualizarPago(pagoId: string, metodo: string, referencia: string) {
+    const db = await getDb();
+    await db.execute("UPDATE pagos SET metodo = $1, referencia = $2 WHERE id = $3", [
+      metodo,
+      referencia.trim() || null,
+      pagoId,
+    ]);
+    if (seleccionada) await abrirFactura(seleccionada.id);
   }
 
   function formatearFechaHora(fh: string) {
@@ -151,6 +166,12 @@ export default function Facturas({ config }: { config: ConfigRow }) {
               Vendedor: {seleccionada.vendedor_nombre ?? "sin especificar"}
               <br />
               Cliente: {seleccionada.cliente_nombre ? `${seleccionada.cliente_nombre} (${seleccionada.cliente_cedula})` : "Consumidor final"}
+              {seleccionada.cliente_direccion && (
+                <>
+                  <br />
+                  Dirección: {seleccionada.cliente_direccion}
+                </>
+              )}
               <br />
               Estado: {seleccionada.estado}
             </p>
@@ -182,6 +203,41 @@ export default function Facturas({ config }: { config: ConfigRow }) {
                 (USD {(seleccionada.total_bs / seleccionada.tasa_cambio_dia).toFixed(2)})
               </span>
             </p>
+            <div className="no-print">
+              <p style={{ marginBottom: 4 }}>
+                Pagos — si la caja se equivocó de método (ej. marcó punto de venta y fue biopago),
+                se corrige acá:
+              </p>
+              {pagos.map((p) =>
+                p.metodo === "CREDITO" ? (
+                  <div key={p.id} className="form-row" style={{ alignItems: "center" }}>
+                    <span style={{ minWidth: 140 }}>Crédito pendiente</span>
+                    <span className="hint" style={{ margin: 0 }}>Bs {p.monto_bs.toFixed(2)}</span>
+                  </div>
+                ) : (
+                  <div key={p.id} className="form-row" style={{ alignItems: "center" }}>
+                    <select
+                      defaultValue={p.metodo}
+                      onChange={(e) => actualizarPago(p.id, e.target.value, p.referencia ?? "")}
+                      style={{ minWidth: 140 }}
+                    >
+                      {METODOS_PAGO.map((m) => (
+                        <option key={m} value={m}>
+                          {m.split("_").join(" ")}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="hint" style={{ margin: 0 }}>Bs {p.monto_bs.toFixed(2)}</span>
+                    <input
+                      placeholder="Referencia (opcional)"
+                      defaultValue={p.referencia ?? ""}
+                      onBlur={(e) => actualizarPago(p.id, p.metodo, e.target.value)}
+                      style={{ maxWidth: 180 }}
+                    />
+                  </div>
+                )
+              )}
+            </div>
             <p>Pagos: {pagos.map((p) => `${p.metodo.split("_").join(" ")} Bs ${p.monto_bs.toFixed(2)}`).join(" · ")}</p>
             {seleccionada.monto_pendiente_usd != null && seleccionada.monto_pendiente_usd > 0 && (
               <p className="restante-pendiente">Saldo pendiente: USD {seleccionada.monto_pendiente_usd.toFixed(2)}</p>

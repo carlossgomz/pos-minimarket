@@ -10,6 +10,12 @@ on:
     tags:
       - "v*"
 
+# Sin esto, el GITHUB_TOKEN automático viene de solo lectura y falla al
+# crear/publicar el Release ("Resource not accessible by integration") —
+# a nivel de workflow para que aplique a los 3 jobs, no solo a "compilar".
+permissions:
+  contents: write
+
 jobs:
   crear-release:
     runs-on: ubuntu-latest
@@ -34,10 +40,6 @@ jobs:
   compilar:
     needs: crear-release
     runs-on: windows-latest
-    # Sin esto, el GITHUB_TOKEN automático viene de solo lectura y falla
-    # al crear el Release ("Resource not accessible by integration").
-    permissions:
-      contents: write
     strategy:
       fail-fast: false
       # Uno a la vez: ambos targets escriben en el mismo latest.json del

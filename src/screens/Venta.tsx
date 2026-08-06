@@ -178,6 +178,9 @@ export default function Venta({
   const [clienteResultados, setClienteResultados] = useState<Cliente[]>([]);
   const [clienteMostrarDropdown, setClienteMostrarDropdown] = useState(false);
   const [clienteNuevoNombre, setClienteNuevoNombre] = useState("");
+  const [clienteNuevoCedula, setClienteNuevoCedula] = useState("");
+  const [clienteNuevoTelefono, setClienteNuevoTelefono] = useState("");
+  const [clienteNuevoDireccion, setClienteNuevoDireccion] = useState("");
   const [mostrarClienteNuevo, setMostrarClienteNuevo] = useState(false);
 
   // --- Consumo interno del día (independiente de los tickets de venta) ---
@@ -653,18 +656,22 @@ export default function Venta({
   }
 
   async function crearClienteRapido() {
-    const cedula = clienteBusqueda.trim();
+    const cedula = clienteNuevoCedula.trim();
     if (!cedula || !clienteNuevoNombre.trim()) {
       setMensaje("Para crear el cliente necesitas cédula y nombre.");
       return;
     }
     const db = await getDb();
     const id = crypto.randomUUID();
+    const telefono = clienteNuevoTelefono.trim() || null;
+    const direccion = clienteNuevoDireccion.trim() || null;
     try {
-      await db.execute("INSERT INTO clientes (id, nombre, cedula) VALUES ($1,$2,$3)", [
+      await db.execute("INSERT INTO clientes (id, nombre, cedula, telefono, direccion) VALUES ($1,$2,$3,$4,$5)", [
         id,
         clienteNuevoNombre.trim(),
         cedula,
+        telefono,
+        direccion,
       ]);
     } catch (e) {
       setMensaje(`No se pudo crear el cliente (¿cédula repetida?): ${String(e)}`);
@@ -674,12 +681,16 @@ export default function Venta({
       id,
       nombre: clienteNuevoNombre.trim(),
       cedula,
-      telefono: null,
-      direccion: null,
+      telefono,
+      direccion,
       cliente_app_id: null,
       credito_autorizado: 0,
     });
     setClienteNuevoNombre("");
+    setClienteNuevoCedula("");
+    setClienteNuevoTelefono("");
+    setClienteNuevoDireccion("");
+    setMostrarClienteNuevo(false);
   }
 
   function agregarAlCarrito(p: Producto) {
@@ -1395,6 +1406,11 @@ export default function Venta({
                           style={{ marginLeft: 6 }}
                           onMouseDown={(e) => {
                             e.preventDefault();
+                            // La cédula ya tecleada en la búsqueda es casi
+                            // siempre la del cliente nuevo — se precarga,
+                            // pero queda editable por si escribieron el
+                            // nombre en vez de la cédula.
+                            setClienteNuevoCedula(clienteBusqueda.trim());
                             setMostrarClienteNuevo(true);
                           }}
                         >
@@ -1406,14 +1422,32 @@ export default function Venta({
                 </ul>
               )}
               {mostrarClienteNuevo && (
-                <div className="form-row" style={{ marginTop: 8 }}>
+                <div className="form-row" style={{ marginTop: 8, flexWrap: "wrap" }}>
                   <input
-                    placeholder="Nombre del cliente nuevo"
+                    placeholder="Nombre"
                     value={clienteNuevoNombre}
                     onChange={(e) => setClienteNuevoNombre(e.target.value)}
                   />
+                  <input
+                    placeholder="Cédula"
+                    value={clienteNuevoCedula}
+                    onChange={(e) => setClienteNuevoCedula(e.target.value)}
+                  />
+                  <input
+                    placeholder="Teléfono (opcional)"
+                    value={clienteNuevoTelefono}
+                    onChange={(e) => setClienteNuevoTelefono(e.target.value)}
+                  />
+                  <input
+                    placeholder="Dirección (opcional)"
+                    value={clienteNuevoDireccion}
+                    onChange={(e) => setClienteNuevoDireccion(e.target.value)}
+                  />
                   <button type="button" onClick={crearClienteRapido}>
                     Crear y usar
+                  </button>
+                  <button type="button" className="link-btn" onClick={() => setMostrarClienteNuevo(false)}>
+                    cancelar
                   </button>
                 </div>
               )}

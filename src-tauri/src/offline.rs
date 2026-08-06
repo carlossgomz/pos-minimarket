@@ -127,12 +127,14 @@ pub async fn estado_conexion(
     Ok(EstadoConexion { en_linea, pendientes })
 }
 
-/// Arranca la tarea de fondo que, cada ~20s, reproduce la cola pendiente
-/// y refresca la caché de lectura si hay conexión. Se llama una sola vez
-/// desde `.setup()` en lib.rs.
+/// Arranca la tarea de fondo que, cada ~5s, reproduce la cola pendiente y
+/// refresca la caché de lectura si hay conexión. Se llama una sola vez
+/// desde `.setup()` en lib.rs. Antes eran 20s — se acortó porque ahora los
+/// buscadores en vivo (ver db_select_cache) leen de esta caché para
+/// sentirse instantáneos, así que le conviene quedar más al día.
 pub fn arrancar_tarea_sincronizacion(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
-        let mut intervalo = tokio::time::interval(std::time::Duration::from_secs(20));
+        let mut intervalo = tokio::time::interval(std::time::Duration::from_secs(5));
         loop {
             intervalo.tick().await;
             sincronizar_una_vez(&app).await;
@@ -214,6 +216,13 @@ async fn reproducir_outbox(
 /// Refresca las tablas de solo-lectura de la caché local con lo último
 /// de Turso — mismo patrón INSERT OR REPLACE que la herramienta de
 /// migración de datos usó para la carga inicial.
+///
+/// Todo el refresco (las 7 tablas, cientos de filas) va en UNA sola
+/// transacción — antes cada DELETE/INSERT confirmaba por separado, lo que
+/// en un disco lento (una PC vieja, justo el hardware que más nos
+/// importa) significa cientos de fsync individuales cada 5 segundos, y
+/// eso sí se siente como que la app se traba a ratos. Con una sola
+/// transacción es un solo commit para todo el ciclo.
 async fn refrescar_cache(conn_remota: &libsql::Connection, cache: &EstadoCache) -> Result<(), String> {
     let conn_cache = cache.conectar().await?;
 
@@ -226,9 +235,10 @@ async fn refrescar_cache(conn_remota: &libsql::Connection, cache: &EstadoCache) 
         .await
         .map_err(|e| e.to_string())?;
 
+    let tx = conn_cache.transaction().await.map_err(|e| e.to_string())?;
+
     for tabla in TABLAS_CACHEADAS {
-        conn_cache
-            .execute(&format!("DELETE FROM {tabla}"), ())
+        tx.execute(&format!("DELETE FROM {tabla}"), ())
             .await
             .map_err(|e| e.to_string())?;
 
@@ -253,12 +263,13 @@ async fn refrescar_cache(conn_remota: &libsql::Connection, cache: &EstadoCache) 
             }
             let valores: Vec<libsql::Value> =
                 (0..n).map(|i| fila.get_value(i).unwrap()).collect();
-            conn_cache
-                .execute(insert_sql.as_ref().unwrap(), valores)
+            tx.execute(insert_sql.as_ref().unwrap(), valores)
                 .await
                 .map_err(|e| e.to_string())?;
         }
     }
+
+    tx.commit().await.map_err(|e| e.to_string())?;
 
     Ok(())
 }

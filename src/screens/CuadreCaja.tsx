@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { getDb } from "../db";
+import { fechaHoraVenezuela } from "../fecha";
 
-const METODOS_BASE = ["EFECTIVO", "PUNTO_VENTA", "BIOPAGO", "PAGO_MOVIL", "TRANSFERENCIA"];
+const METODOS_BASE = ["PUNTO_VENTA", "BIOPAGO", "PAGO_MOVIL", "EFECTIVO", "DIVISAS", "TRANSFERENCIA"];
 
 type Fila = { metodo: string; esperado: number; contado: string };
 
 function hoyISO() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return fechaHoraVenezuela().slice(0, 10);
 }
 
 function armarFilas(esperados: Record<string, number>, contadosGuardados: Record<string, number>): Fila[] {
@@ -23,6 +23,12 @@ export default function CuadreCaja() {
   const [fecha, setFecha] = useState(hoyISO());
   const [ingresos, setIngresos] = useState<Fila[]>([]);
   const [egresos, setEgresos] = useState<Fila[]>([]);
+  // Puramente informativo — de dónde sale el número de EFECTIVO en
+  // "ingresos" (ver más abajo por qué se resta ahí y no en una tarjeta
+  // aparte). No tiene "contado" propio: la caja física es una sola, no
+  // tiene sentido pedir el conteo dos veces.
+  const [aporteCapitalExterno, setAporteCapitalExterno] = useState(0);
+  const [avanceEfectivo, setAvanceEfectivo] = useState(0);
   const [guardando, setGuardando] = useState(false);
   const [guardado, setGuardado] = useState(false);
   const [mensaje, setMensaje] = useState<string | null>(null);
@@ -72,10 +78,21 @@ export default function CuadreCaja() {
     for (const r of porAvanceCobro) {
       esperadosIngreso[r.metodo_cobro] = (esperadosIngreso[r.metodo_cobro] ?? 0) + r.monto;
     }
+    // El EFECTIVO esperado es UN solo número neto — la caja física es una
+    // sola, así que solo tiene sentido una casilla de "contado" para
+    // efectivo, no dos repartidas en tarjetas distintas (eso fue lo que
+    // confundía antes: se veían 1000 acá y 300 aparte, y nunca se
+    // combinaban en un "700" visible en ningún lado). Un aporte de capital
+    // externo suma (entra a la misma caja) y un avance entregado resta
+    // (sale de la misma caja), sin importar su fuente — ver el desglose
+    // que se muestra junto al renglón de EFECTIVO más abajo.
     const aporteCapitalExterno = porAporteCapitalExterno[0]?.monto ?? 0;
-    if (aporteCapitalExterno > 0) {
-      esperadosIngreso.EFECTIVO = (esperadosIngreso.EFECTIVO ?? 0) + aporteCapitalExterno;
+    const avanceEfectivo = porAvanceEfectivo[0]?.monto ?? 0;
+    if (aporteCapitalExterno > 0 || avanceEfectivo > 0) {
+      esperadosIngreso.EFECTIVO = (esperadosIngreso.EFECTIVO ?? 0) + aporteCapitalExterno - avanceEfectivo;
     }
+    setAporteCapitalExterno(aporteCapitalExterno);
+    setAvanceEfectivo(avanceEfectivo);
 
     const porPagoProveedor = await db.select<{ metodo: string | null; monto: number }[]>(
       `SELECT metodo, SUM(monto_bs) as monto FROM pagos_proveedor WHERE date(created_at) = $1 GROUP BY metodo`,
@@ -86,10 +103,6 @@ export default function CuadreCaja() {
       const m = r.metodo ?? "SIN_ESPECIFICAR";
       esperadosEgreso[m] = (esperadosEgreso[m] ?? 0) + r.monto;
     }
-    const avanceEfectivo = porAvanceEfectivo[0]?.monto ?? 0;
-    if (avanceEfectivo > 0) {
-      esperadosEgreso.EFECTIVO = (esperadosEgreso.EFECTIVO ?? 0) + avanceEfectivo;
-    }
 
     const guardados = await db.select<{ tipo: string; metodo: string; monto_contado_bs: number }[]>(
       `SELECT tipo, metodo, monto_contado_bs FROM cierres_caja WHERE fecha = $1`,
@@ -99,7 +112,7 @@ export default function CuadreCaja() {
     const contadosEgreso: Record<string, number> = {};
     for (const g of guardados) {
       if (g.tipo === "INGRESO") contadosIngreso[g.metodo] = g.monto_contado_bs;
-      else contadosEgreso[g.metodo] = g.monto_contado_bs;
+      else if (g.tipo !== "AVANCE") contadosEgreso[g.metodo] = g.monto_contado_bs;
     }
 
     setIngresos(armarFilas(esperadosIngreso, contadosIngreso));
@@ -122,7 +135,13 @@ export default function CuadreCaja() {
     setMensaje(null);
     const db = await getDb();
     try {
-      await db.execute("BEGIN");
+      // Cada fila es un UPSERT independiente por (fecha, tipo, metodo) — no
+      // hace falta envolver esto en BEGIN/COMMIT (cada db.execute() abre su
+      // propia conexión contra Turso, así que un BEGIN/COMMIT suelto entre
+      // llamadas separadas no hace nada real: por eso el botón se quedaba
+      // trabado en "Guardando…", el COMMIT fallaba sin transacción activa
+      // y el ROLLBACK del catch fallaba también, sin llegar nunca a
+      // setGuardando(false)).
       for (const [tipo, filas] of [
         ["INGRESO", ingresos],
         ["EGRESO", egresos],
@@ -141,9 +160,7 @@ export default function CuadreCaja() {
           );
         }
       }
-      await db.execute("COMMIT");
     } catch (e) {
-      await db.execute("ROLLBACK");
       setMensaje(`No se pudo guardar el cierre: ${String(e)}`);
       setGuardando(false);
       return;
@@ -220,6 +237,14 @@ export default function CuadreCaja() {
       <div className="venta-layout">
         <div className="card">
           <h2>Ingresos (ventas y abonos de crédito)</h2>
+          {(aporteCapitalExterno > 0 || avanceEfectivo > 0) && (
+            <p className="hint">
+              El renglón de EFECTIVO ya incluye los avances del día: +Bs {aporteCapitalExterno.toFixed(2)}{" "}
+              de aportes de capital externo (entra a la caja) − Bs {avanceEfectivo.toFixed(2)} entregados
+              en avances (sale de la caja). Lo cobrado a cambio de cada avance (por otro método) está
+              sumado en su propia fila más abajo.
+            </p>
+          )}
           {tablaFilas(ingresos, "ingresos")}
           <div className="totales">
             <span>Esperado: Bs {totalIngresoEsperado.toFixed(2)}</span>
@@ -242,8 +267,16 @@ export default function CuadreCaja() {
           <span>Neto esperado: Bs {(totalIngresoEsperado - totalEgresoEsperado).toFixed(2)}</span>
           <strong>Neto contado: Bs {(totalIngresoContado - totalEgresoContado).toFixed(2)}</strong>
         </div>
-        {mensaje && <p className="error">{mensaje}</p>}
-        {guardado && <p className="hint">Cierre guardado ✅ — puedes corregirlo y guardar de nuevo si hace falta.</p>}
+        {mensaje && (
+          <p className="error" style={{ marginTop: 10 }}>
+            {mensaje}
+          </p>
+        )}
+        {guardado && (
+          <p className="hint" style={{ marginTop: 10 }}>
+            Cierre guardado ✅ — puedes corregirlo y guardar de nuevo si hace falta.
+          </p>
+        )}
         <button className="cobrar-btn" onClick={guardarCierre} disabled={guardando}>
           {guardando ? "Guardando…" : "Guardar cierre del día"}
         </button>

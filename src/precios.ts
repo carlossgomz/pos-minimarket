@@ -11,8 +11,14 @@ import { Producto } from "./types";
 
 type ProductoParaPrecio = Pick<Producto, "costo_actual_usd" | "margen_porcentaje">;
 
+// "Margen" acá es margen bruto sobre el precio de venta (qué % del precio
+// final es ganancia), no markup sobre el costo — con costo 2.99 y margen
+// 30%, el precio da 4.27 (2.99 / 0.70), no 3.89 (2.99 * 1.30). Se topa en
+// 99.99 para no dividir por cero (o un número negativo) si alguien
+// escribe 100 o más por error.
 export function precioVentaUsd(p: ProductoParaPrecio): number {
-  return p.costo_actual_usd * (1 + (p.margen_porcentaje ?? 0) / 100);
+  const margen = Math.min(Math.max(p.margen_porcentaje ?? 0, 0), 99.99);
+  return p.costo_actual_usd / (1 - margen / 100);
 }
 
 export function precioVentaBsHoy(p: ProductoParaPrecio, tasaCambioDia: number): number {

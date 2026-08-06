@@ -4,6 +4,7 @@ import { getDb } from "../db";
 import { ConfigRow, MovimientoInventario, ProductoInventario } from "../types";
 import { gananciaUnitariaUsd, precioVentaBsHoy, precioVentaUsd } from "../precios";
 import { fechaHoraVenezuela } from "../fecha";
+import { normalizarTexto, sqlSinAcentos } from "../busqueda";
 
 // Todo lo de acá es por producto individual — no hay ningún número que
 // sume varios productos entre sí. Para ver el panorama general de precios
@@ -54,12 +55,12 @@ export default function Movimientos({ config }: { config: ConfigRow }) {
     }
     const timer = setTimeout(async () => {
       const db = await getDb();
-      const rows = await db.select<ProductoInventario[]>(
+      const rows = await db.selectRapido<ProductoInventario[]>(
         `SELECT p.*, c.nombre as categoria_nombre
          FROM productos p LEFT JOIN categorias c ON c.id = p.categoria_id
-         WHERE p.nombre LIKE $1 OR p.codigo_barra LIKE $1
+         WHERE ${sqlSinAcentos("p.nombre")} LIKE $1 OR p.codigo_barra LIKE $2
          ORDER BY p.nombre LIMIT 8`,
-        [`%${term}%`]
+        [`%${normalizarTexto(term)}%`, `%${term}%`]
       );
       setResultados(rows);
       setMostrarDropdown(rows.length > 0);
@@ -138,12 +139,12 @@ export default function Movimientos({ config }: { config: ConfigRow }) {
     }
     const timer = setTimeout(async () => {
       const db = await getDb();
-      const rows = await db.select<ProductoInventario[]>(
+      const rows = await db.selectRapido<ProductoInventario[]>(
         `SELECT p.*, c.nombre as categoria_nombre
          FROM productos p LEFT JOIN categorias c ON c.id = p.categoria_id
-         WHERE (p.nombre LIKE $1 OR p.codigo_barra LIKE $1) AND p.id != $2
+         WHERE (${sqlSinAcentos("p.nombre")} LIKE $1 OR p.codigo_barra LIKE $2) AND p.id != $3
          ORDER BY p.nombre LIMIT 8`,
-        [`%${term}%`, productoSeleccionado?.id ?? ""]
+        [`%${normalizarTexto(term)}%`, `%${term}%`, productoSeleccionado?.id ?? ""]
       );
       setResultadosDestino(rows);
       setMostrarDropdownDestino(rows.length > 0);

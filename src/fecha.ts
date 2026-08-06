@@ -19,3 +19,9 @@ export function fechaHoraVenezuela(): string {
   const get = (t: string) => partes.find((p) => p.type === t)?.value ?? "00";
   return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}:${get("second")}`;
 }
+
+// Solo la fecha (YYYY-MM-DD) de "hoy" en Venezuela — para valores por
+// defecto de filtros de fecha (Reportes, Estadísticas, Cuadre de caja).
+export function hoyVenezuela(): string {
+  return fechaHoraVenezuela().slice(0, 10);
+}

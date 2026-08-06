@@ -24,13 +24,12 @@ async fn en_linea(app: &tauri::AppHandle) -> bool {
 }
 
 /// Descuenta `cantidad` de los lotes más viejos con stock de un producto
-/// (FIFO — primero entra, primero sale) y deja `productos.costo_actual_usd`/
-/// `margen_porcentaje` apuntando al lote que quede vigente (el más viejo
-/// que todavía tenga stock). Gracias a esto, el resto del sistema
-/// (src/precios.ts, Venta.tsx, Inventario.tsx) sigue leyendo esas dos
-/// columnas exactamente igual que antes — sin saber que por debajo hay
-/// lotes — y automáticamente vende al precio del stock viejo hasta que se
-/// agota, momento en el que pasa solo al precio del lote siguiente.
+/// (FIFO — primero entra, primero sale) — solo para llevar el rastro de
+/// cuánto queda de cada compra (usado por la elegibilidad de editar/borrar
+/// facturas y por el desglose). Ya NO toca `productos.costo_actual_usd`: el
+/// precio de venta vigente ahora solo cambia al comprar (promedio ponderado
+/// confirmado, ver `insertar_items_factura_interna`) o al revertir una
+/// compra — nunca automáticamente porque un lote se agotó vendiendo.
 ///
 /// Si la cantidad pedida supera lo que queda en lotes (sobreventa), se
 /// permite igual — mismo criterio tolerante que ya tenía el sistema antes
@@ -78,22 +77,24 @@ async fn consumir_stock_fifo(
         restante -= consumido;
     }
 
-    actualizar_costo_vigente(tx, producto_id).await?;
-
     Ok(costo_total)
 }
 
-/// Apunta `productos.costo_actual_usd`/`margen_porcentaje` al lote más
-/// viejo que todavía tenga stock (o los deja como estaban si ya no queda
-/// ninguno — el stock en 0 hace irrelevante ese valor). Compartida entre
-/// `consumir_stock_fifo` (tras una venta/salida) y
-/// `revertir_factura_compra_interna` (tras deshacer una compra).
+/// Recalcula `productos.costo_actual_usd` como el promedio ponderado de los
+/// lotes que quedan con stock — solo se usa al revertir una factura de
+/// compra (`revertir_factura_compra_interna`), para que el costo vigente
+/// vuelva a reflejar lo que realmente queda tras deshacer esa compra en
+/// concreto. Si no queda ningún lote con stock, se deja el costo como
+/// estaba (no hay con qué recalcularlo). No toca margen_porcentaje ni
+/// precio_venta_bs — promediarlos también no vale la complejidad para este
+/// caso de borde (revertir solo se permite si la factura no vendió nada
+/// todavía, así que el precio de venta al público no llegó a usarse con
+/// datos de esa compra).
 async fn actualizar_costo_vigente(tx: &libsql::Transaction, producto_id: &str) -> Result<(), String> {
-    let siguiente = tx
+    let fila = tx
         .query(
-            "SELECT costo_unitario_usd, margen_porcentaje FROM lotes_producto
-             WHERE producto_id = ?1 AND cantidad_restante > 0
-             ORDER BY creado_at ASC, rowid ASC LIMIT 1",
+            "SELECT SUM(cantidad_restante * costo_unitario_usd), SUM(cantidad_restante)
+             FROM lotes_producto WHERE producto_id = ?1 AND cantidad_restante > 0",
             libsql::params![producto_id.to_string()],
         )
         .await
@@ -102,15 +103,19 @@ async fn actualizar_costo_vigente(tx: &libsql::Transaction, producto_id: &str) -
         .await
         .map_err(|e| e.to_string())?;
 
-    if let Some(fila) = siguiente {
-        let costo: f64 = fila.get(0).map_err(|e| e.to_string())?;
-        let margen: f64 = fila.get(1).map_err(|e| e.to_string())?;
-        tx.execute(
-            "UPDATE productos SET costo_actual_usd = ?1, margen_porcentaje = ?2 WHERE id = ?3",
-            libsql::params![costo, margen, producto_id.to_string()],
-        )
-        .await
-        .map_err(|e| e.to_string())?;
+    if let Some(fila) = fila {
+        let suma_costo: Option<f64> = fila.get(0).map_err(|e| e.to_string())?;
+        let suma_cantidad: Option<f64> = fila.get(1).map_err(|e| e.to_string())?;
+        if let (Some(costo), Some(cantidad)) = (suma_costo, suma_cantidad) {
+            if cantidad > 0.0001 {
+                tx.execute(
+                    "UPDATE productos SET costo_actual_usd = ?1 WHERE id = ?2",
+                    libsql::params![costo / cantidad, producto_id.to_string()],
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+            }
+        }
     }
 
     Ok(())
@@ -1034,6 +1039,17 @@ pub struct ItemFacturaCompraInput {
     tasa_iva_aplicada: f64,
     aplica_descuento: bool,
     descuento_aplicado: f64,
+    /// Costo/margen/precio que queda VIGENTE para el producto tras esta
+    /// compra — el promedio ponderado entre el stock que ya tenía (a su
+    /// costo anterior) y esta compra nueva, ya confirmado por la persona en
+    /// Compras.tsx antes de guardar. Si el producto es nuevo o no tenía
+    /// stock, es igual a costo_unitario_usd/margen_aplicado/precio_venta_bs
+    /// de esta línea. Reemplaza al viejo esquema "el lote más viejo manda
+    /// hasta agotarse": ahora el precio de venta cambia de una vez, sin
+    /// esperar a que se venda el stock que ya había.
+    costo_vigente_usd: f64,
+    margen_vigente: f64,
+    precio_venta_vigente_bs: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1061,6 +1077,7 @@ pub struct FacturaCompraOutput {
 async fn insertar_items_factura_interna(
     tx: &libsql::Transaction,
     factura_id: &str,
+    proveedor_id: &str,
     fecha_hora: &str,
     items: &[ItemFacturaCompraInput],
 ) -> Result<(), String> {
@@ -1136,26 +1153,34 @@ async fn insertar_items_factura_interna(
         .await
         .map_err(|e| e.to_string())?;
 
-        // Costeo por lotes (FIFO): si el producto ya tenía stock vigente de
-        // una compra más vieja, ese lote sigue mandando el costo/precio
-        // hasta agotarse — el lote nuevo espera su turno en la cola en vez
-        // de sobreescribir de una vez (eso es justo lo que evita que subir
-        // el precio de una compra nueva encarezca stock que ya se había
-        // comprado más barato). Si NO tenía stock vigente (producto nuevo,
-        // o se había agotado), el lote nuevo pasa a ser el vigente ya
-        // mismo.
-        let tenia_stock_vigente: i64 = tx
-            .query(
-                "SELECT COUNT(*) FROM lotes_producto WHERE producto_id = ?1 AND cantidad_restante > 0",
-                libsql::params![item.producto_id.clone()],
-            )
-            .await
-            .map_err(|e| e.to_string())?
-            .next()
-            .await
-            .map_err(|e| e.to_string())?
-            .map(|f| f.get::<i64>(0).unwrap_or(0))
-            .unwrap_or(0);
+        // El costo/margen/precio vigente pasa a ser el promedio ponderado
+        // ya confirmado en el frontend (costo_vigente_usd/margen_vigente/
+        // precio_venta_vigente_bs) — de una vez, sin esperar a que se agote
+        // el stock que ya había. `lotes_producto` (abajo) igual se sigue
+        // llevando con el costo REAL de esta compra (costo_unitario_usd),
+        // para el costeo de stock, el desglose y la reversión de facturas.
+        tx.execute(
+            "UPDATE productos
+             SET costo_actual_usd = ?1,
+                 margen_porcentaje = ?2,
+                 precio_venta_bs = ?3,
+                 stock_actual = stock_actual + ?5,
+                 unidades_por_paquete = ?6,
+                 codigo_proveedor = ?7,
+                 activo = 1
+             WHERE id = ?4",
+            libsql::params![
+                item.costo_vigente_usd,
+                item.margen_vigente,
+                item.precio_venta_vigente_bs,
+                item.producto_id.clone(),
+                item.cantidad_total,
+                item.unidades_por_paquete,
+                item.codigo_proveedor.clone(),
+            ],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         tx.execute(
             "INSERT INTO lotes_producto (id, producto_id, costo_unitario_usd, margen_porcentaje, cantidad_inicial, cantidad_restante, factura_compra_id)
@@ -1171,37 +1196,6 @@ async fn insertar_items_factura_interna(
         .await
         .map_err(|e| e.to_string())?;
 
-        if tenia_stock_vigente == 0 {
-            tx.execute(
-                "UPDATE productos SET costo_actual_usd = ?1, margen_porcentaje = ?2, precio_venta_bs = ?3 WHERE id = ?4",
-                libsql::params![
-                    item.costo_unitario_usd,
-                    item.margen_aplicado,
-                    item.precio_venta_bs,
-                    item.producto_id.clone(),
-                ],
-            )
-            .await
-            .map_err(|e| e.to_string())?;
-        }
-
-        tx.execute(
-            "UPDATE productos
-             SET stock_actual = stock_actual + ?1,
-                 unidades_por_paquete = ?2,
-                 codigo_proveedor = ?3,
-                 activo = 1
-             WHERE id = ?4",
-            libsql::params![
-                item.cantidad_total,
-                item.unidades_por_paquete,
-                item.codigo_proveedor.clone(),
-                item.producto_id.clone(),
-            ],
-        )
-        .await
-        .map_err(|e| e.to_string())?;
-
         tx.execute(
             "INSERT INTO movimientos_inventario (id, producto_id, tipo, cantidad, motivo, referencia, created_at)
              VALUES (lower(hex(randomblob(16))), ?1, 'ENTRADA', ?2, 'Compra a proveedor', ?3, ?4)",
@@ -1209,6 +1203,21 @@ async fn insertar_items_factura_interna(
         )
         .await
         .map_err(|e| e.to_string())?;
+
+        // Recuerda el código de ESTE proveedor para este producto — un
+        // mismo producto puede tener un código distinto por cada
+        // proveedor al que se le compra, así que se guardan todos (no solo
+        // el último) para reconocerlo la próxima vez sin duplicar.
+        if let Some(codigo) = item.codigo_proveedor.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            tx.execute(
+                "INSERT INTO codigos_proveedor_producto (id, producto_id, proveedor_id, codigo)
+                 VALUES (lower(hex(randomblob(16))), ?1, ?2, ?3)
+                 ON CONFLICT(proveedor_id, codigo) DO UPDATE SET producto_id = excluded.producto_id",
+                libsql::params![item.producto_id.clone(), proveedor_id.to_string(), codigo.to_string()],
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        }
     }
 
     Ok(())
@@ -1255,7 +1264,7 @@ pub async fn guardar_factura_compra(
     .await
     .map_err(|e| e.to_string())?;
 
-    insertar_items_factura_interna(&tx, &input.id, &input.fecha_hora, &input.items).await?;
+    insertar_items_factura_interna(&tx, &input.id, &input.proveedor_id, &input.fecha_hora, &input.items).await?;
 
     tx.commit().await.map_err(|e| e.to_string())?;
 
@@ -1438,7 +1447,7 @@ pub async fn editar_factura_compra(
     .await
     .map_err(|e| e.to_string())?;
 
-    insertar_items_factura_interna(&tx, &factura_id, &input.fecha_hora, &input.items).await?;
+    insertar_items_factura_interna(&tx, &factura_id, &input.proveedor_id, &input.fecha_hora, &input.items).await?;
 
     tx.commit().await.map_err(|e| e.to_string())?;
 

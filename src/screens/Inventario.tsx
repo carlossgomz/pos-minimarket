@@ -3,6 +3,7 @@ import { getDb } from "../db";
 import { Categoria, ConfigRow, ProductoInventario } from "../types";
 import { estadoStock, gananciaUnitariaUsd, precioVentaBsHoy, precioVentaUsd } from "../precios";
 import { fechaHoraVenezuela } from "../fecha";
+import { normalizarTexto, sqlSinAcentos } from "../busqueda";
 
 // Solo el total histórico de entradas/salidas, como referencia rápida en
 // el catálogo — sin botones ni edición acá; para registrar un movimiento
@@ -12,14 +13,29 @@ type ProductoConMovimientos = ProductoInventario & {
   salidas_totales: number;
 };
 
-export default function Inventario({ config }: { config: ConfigRow }) {
+export default function Inventario({
+  config,
+  soloProblemasInicial,
+}: {
+  config: ConfigRow;
+  soloProblemasInicial?: boolean;
+}) {
   const [productos, setProductos] = useState<ProductoConMovimientos[]>([]);
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [mensaje, setMensaje] = useState<string | null>(null);
 
   const [busqueda, setBusqueda] = useState("");
-  const [soloProblemas, setSoloProblemas] = useState(false);
+  const [soloProblemas, setSoloProblemas] = useState(soloProblemasInicial ?? false);
+  // El catálogo completo puede ser cientos de productos — sin paginar,
+  // cada uno con varios <input>/<select> editables, la tabla entera se
+  // vuelve muchísimos nodos del DOM de una sola vez, y eso es justo lo
+  // que se siente pesado en una PC vieja. Paginar acá (solo la tabla
+  // editable en pantalla, no la lista para imprimir de más abajo, que
+  // necesita salir completa) es la optimización con más impacto de toda
+  // esta pantalla.
+  const [pagina, setPagina] = useState(0);
+  const TAMANO_PAGINA = 50;
 
   // --- Alta rápida ---
   const [codigo, setCodigo] = useState("");
@@ -32,7 +48,7 @@ export default function Inventario({ config }: { config: ConfigRow }) {
     setError(null);
     try {
       const db = await getDb();
-      const term = `%${busqueda.trim()}%`;
+      const termCrudo = busqueda.trim();
       const rows = await db.select<ProductoConMovimientos[]>(
         `SELECT p.*, c.nombre as categoria_nombre,
                 COALESCE((SELECT SUM(m.cantidad) FROM movimientos_inventario m
@@ -40,9 +56,9 @@ export default function Inventario({ config }: { config: ConfigRow }) {
                 COALESCE((SELECT SUM(m.cantidad) FROM movimientos_inventario m
                           WHERE m.producto_id = p.id AND m.tipo = 'SALIDA'), 0) as salidas_totales
          FROM productos p LEFT JOIN categorias c ON c.id = p.categoria_id
-         WHERE p.nombre LIKE $1 OR p.codigo_barra LIKE $1
+         WHERE ${sqlSinAcentos("p.nombre")} LIKE $1 OR p.codigo_barra LIKE $2
          ORDER BY p.nombre`,
-        [term]
+        [`%${normalizarTexto(termCrudo)}%`, `%${termCrudo}%`]
       );
       setProductos(rows);
     } catch (e) {
@@ -59,14 +75,37 @@ export default function Inventario({ config }: { config: ConfigRow }) {
     cargarCategorias();
   }, []);
 
+  // Debounce — sin esto, cada letra tecleada dispara una consulta contra
+  // la base remota de una (esta pantalla no puede usar la caché local
+  // rápida porque su consulta también suma entradas/salidas desde
+  // movimientos_inventario, que la caché no espeja). En una PC vieja,
+  // encadenar varias de estas consultas sin esperar es justo el tipo de
+  // trabajo de fondo que se siente como que la app se traba al escribir.
   useEffect(() => {
-    cargar();
+    const timer = setTimeout(cargar, 250);
+    return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busqueda]);
 
   const productosFiltrados = useMemo(
     () => (soloProblemas ? productos.filter((p) => estadoStock(p) !== "ok") : productos),
     [productos, soloProblemas]
+  );
+
+  const totalPaginas = Math.max(1, Math.ceil(productosFiltrados.length / TAMANO_PAGINA));
+
+  useEffect(() => {
+    setPagina(0);
+  }, [busqueda, soloProblemas]);
+
+  useEffect(() => {
+    if (pagina > totalPaginas - 1) setPagina(totalPaginas - 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [totalPaginas]);
+
+  const productosPagina = useMemo(
+    () => productosFiltrados.slice(pagina * TAMANO_PAGINA, (pagina + 1) * TAMANO_PAGINA),
+    [productosFiltrados, pagina]
   );
 
   async function agregarProducto(e: React.FormEvent) {
@@ -77,7 +116,11 @@ export default function Inventario({ config }: { config: ConfigRow }) {
     const db = await getDb();
     const costo = Number(costoUsd);
     const margenPct = Number(margen || "30");
-    const precioBs = costo * config.tasa_cambio_dia * (1 + margenPct / 100);
+    // Margen bruto sobre el precio de venta (ver precios.ts): costo 2.99 +
+    // margen 30% -> precio 4.27, no 3.89. Topado en 99.99 para no dividir
+    // por cero o un número negativo.
+    const margenClamp = Math.min(Math.max(margenPct, 0), 99.99);
+    const precioBs = (costo / (1 - margenClamp / 100)) * config.tasa_cambio_dia;
     const stock = Number(stockInicial || "0");
 
     const id = crypto.randomUUID();
@@ -125,7 +168,8 @@ export default function Inventario({ config }: { config: ConfigRow }) {
       setMensaje("El costo y el margen no pueden ser negativos.");
       return;
     }
-    const nuevoPrecioBs = nuevoCosto * config.tasa_cambio_dia * (1 + nuevoMargen / 100);
+    const margenClamp = Math.min(Math.max(nuevoMargen, 0), 99.99);
+    const nuevoPrecioBs = (nuevoCosto / (1 - margenClamp / 100)) * config.tasa_cambio_dia;
     const db = await getDb();
     await db.execute(
       "UPDATE productos SET costo_actual_usd = $1, margen_porcentaje = $2, precio_venta_bs = $3 WHERE id = $4",
@@ -267,7 +311,20 @@ export default function Inventario({ config }: { config: ConfigRow }) {
               Imprimir lista para conteo
             </button>
           </div>
-          <p className="hint">
+          {totalPaginas > 1 && (
+            <div className="form-row no-print" style={{ alignItems: "center", justifyContent: "flex-end", gap: 10 }}>
+              <button type="button" disabled={pagina === 0} onClick={() => setPagina((p) => p - 1)}>
+                ← Anterior
+              </button>
+              <span className="hint" style={{ margin: 0 }}>
+                Página {pagina + 1} de {totalPaginas}
+              </span>
+              <button type="button" disabled={pagina >= totalPaginas - 1} onClick={() => setPagina((p) => p + 1)}>
+                Siguiente →
+              </button>
+            </div>
+          )}
+          <p className="hint" style={{ marginTop: totalPaginas > 1 ? 10 : -8 }}>
             Código, nombre, categoría, costo y margen se editan directo en la tabla — escribe y
             sal del campo (o cambia el desplegable) para guardar. El resto de las columnas se
             recalculan solas con la tasa del día. Cuando a un producto le queda 1 sola unidad, se
@@ -294,7 +351,7 @@ export default function Inventario({ config }: { config: ConfigRow }) {
                 </tr>
               </thead>
               <tbody>
-                {productosFiltrados.map((p) => {
+                {productosPagina.map((p) => {
                   const estado = estadoStock(p);
                   const rentabilidadPct = p.costo_actual_usd > 0 ? (gananciaUnitariaUsd(p) / p.costo_actual_usd) * 100 : 0;
                   return (

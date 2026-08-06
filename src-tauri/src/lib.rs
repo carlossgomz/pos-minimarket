@@ -55,6 +55,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             db::db_select,
+            db::db_select_cache,
             db::db_execute,
             db::tiene_config_sync,
             db::guardar_config_sync,

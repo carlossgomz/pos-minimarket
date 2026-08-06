@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getDb } from "../db";
 import { FacturaResumen, Proveedor } from "../types";
+import { normalizarTexto, sqlSinAcentos } from "../busqueda";
 
 export default function Proveedores() {
   const [proveedores, setProveedores] = useState<Proveedor[]>([]);
@@ -20,15 +21,17 @@ export default function Proveedores() {
     const term = busqueda.trim();
     const rows = term
       ? await db.select<Proveedor[]>(
-          "SELECT * FROM proveedores WHERE nombre LIKE $1 OR rif LIKE $1 ORDER BY nombre",
-          [`%${term}%`]
+          `SELECT * FROM proveedores WHERE ${sqlSinAcentos("nombre")} LIKE $1 OR rif LIKE $2 ORDER BY nombre`,
+          [`%${normalizarTexto(term)}%`, `%${term}%`]
         )
       : await db.select<Proveedor[]>("SELECT * FROM proveedores ORDER BY nombre");
     setProveedores(rows);
   }
 
+  // Debounce — evita una consulta por cada letra tecleada.
   useEffect(() => {
-    cargarProveedores();
+    const timer = setTimeout(cargarProveedores, 250);
+    return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busqueda]);
 

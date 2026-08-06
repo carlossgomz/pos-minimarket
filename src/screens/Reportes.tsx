@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { getDb } from "../db";
 import { ConfigRow } from "../types";
+import { fechaHoraVenezuela } from "../fecha";
 
 type FilaReporte = {
   fecha: string; // YYYY-MM-DD
@@ -14,23 +15,30 @@ function fechaISO(d: Date) {
 }
 
 function hoy() {
-  return fechaISO(new Date());
+  return fechaHoraVenezuela().slice(0, 10);
+}
+
+// Ancla en el mediodía de "hoy" (hora Venezuela) para que sumar/restar meses
+// o días con los setters locales del Date no cruce un límite de día por el
+// desfase entre la zona horaria del sistema operativo y America/Caracas.
+function hoyComoDate(): Date {
+  return new Date(`${hoy()}T12:00:00`);
 }
 
 function primerDiaMes(offsetMeses = 0) {
-  const d = new Date();
+  const d = hoyComoDate();
   d.setMonth(d.getMonth() + offsetMeses, 1);
   return fechaISO(d);
 }
 
 function ultimoDiaMes(offsetMeses = 0) {
-  const d = new Date();
+  const d = hoyComoDate();
   d.setMonth(d.getMonth() + offsetMeses + 1, 0);
   return fechaISO(d);
 }
 
 function inicioSemana() {
-  const d = new Date();
+  const d = hoyComoDate();
   const dia = d.getDay(); // 0=domingo
   d.setDate(d.getDate() - dia);
   return fechaISO(d);
@@ -150,11 +158,21 @@ export default function Reportes({ config }: { config: ConfigRow }) {
       <div className="venta-layout">
         <div className="card">
           <h2>Total vendido</h2>
-          <p className="ticket-total">Bs {resumen.totalVentas.toFixed(2)}</p>
+          <p className="ticket-total">
+            Bs {resumen.totalVentas.toFixed(2)}{" "}
+            <span className="hint" style={{ margin: 0 }}>
+              (USD {(resumen.totalVentas / config.tasa_cambio_dia).toFixed(2)})
+            </span>
+          </p>
         </div>
         <div className="card">
           <h2>Ganancia estimada</h2>
-          <p className="ticket-total">Bs {resumen.totalGanancia.toFixed(2)}</p>
+          <p className="ticket-total">
+            Bs {resumen.totalGanancia.toFixed(2)}{" "}
+            <span className="hint" style={{ margin: 0 }}>
+              (USD {(resumen.totalGanancia / config.tasa_cambio_dia).toFixed(2)})
+            </span>
+          </p>
           <p className="hint">Basada en el costo actual del producto, no en el costo histórico.</p>
         </div>
         <div className="card">
@@ -163,9 +181,18 @@ export default function Reportes({ config }: { config: ConfigRow }) {
         </div>
         <div className="card">
           <h2>Ticket promedio</h2>
-          <p className="ticket-total">Bs {resumen.ticketPromedio.toFixed(2)}</p>
+          <p className="ticket-total">
+            Bs {resumen.ticketPromedio.toFixed(2)}{" "}
+            <span className="hint" style={{ margin: 0 }}>
+              (USD {(resumen.ticketPromedio / config.tasa_cambio_dia).toFixed(2)})
+            </span>
+          </p>
         </div>
       </div>
+      <p className="hint" style={{ marginTop: -8, marginBottom: 16 }}>
+        Conversión a USD con la tasa del día de hoy ({config.tasa_cambio_dia.toFixed(2)} Bs/$) — no la tasa de
+        cada venta individual.
+      </p>
 
       <div className="card">
         <h2>Ventas y ganancia por día</h2>
@@ -233,7 +260,9 @@ export default function Reportes({ config }: { config: ConfigRow }) {
               <th>Fecha</th>
               <th>N° ventas</th>
               <th>Total Bs</th>
+              <th>Total USD</th>
               <th>Ganancia Bs</th>
+              <th>Ganancia USD</th>
             </tr>
           </thead>
           <tbody>
@@ -242,12 +271,14 @@ export default function Reportes({ config }: { config: ConfigRow }) {
                 <td>{new Date(f.fecha + "T00:00:00").toLocaleDateString("es-VE")}</td>
                 <td>{f.num_ventas}</td>
                 <td>{f.total_bs.toFixed(2)}</td>
+                <td>{(f.total_bs / config.tasa_cambio_dia).toFixed(2)}</td>
                 <td>{f.ganancia_bs.toFixed(2)}</td>
+                <td>{(f.ganancia_bs / config.tasa_cambio_dia).toFixed(2)}</td>
               </tr>
             ))}
             {filas.length === 0 && (
               <tr>
-                <td colSpan={4} className="empty">
+                <td colSpan={6} className="empty">
                   Sin ventas en ese rango de fechas.
                 </td>
               </tr>
@@ -265,10 +296,14 @@ export default function Reportes({ config }: { config: ConfigRow }) {
           {new Date().toLocaleString("es-VE")}
         </p>
         <p>
-          <strong>Total vendido:</strong> Bs {resumen.totalVentas.toFixed(2)} &nbsp;·&nbsp;
-          <strong>Ganancia estimada:</strong> Bs {resumen.totalGanancia.toFixed(2)} &nbsp;·&nbsp;
+          <strong>Total vendido:</strong> Bs {resumen.totalVentas.toFixed(2)} (USD{" "}
+          {(resumen.totalVentas / config.tasa_cambio_dia).toFixed(2)}) &nbsp;·&nbsp;
+          <strong>Ganancia estimada:</strong> Bs {resumen.totalGanancia.toFixed(2)} (USD{" "}
+          {(resumen.totalGanancia / config.tasa_cambio_dia).toFixed(2)}) &nbsp;·&nbsp;
           <strong>N° de ventas:</strong> {resumen.numVentas} &nbsp;·&nbsp;
-          <strong>Ticket promedio:</strong> Bs {resumen.ticketPromedio.toFixed(2)}
+          <strong>Ticket promedio:</strong> Bs {resumen.ticketPromedio.toFixed(2)} (USD{" "}
+          {(resumen.ticketPromedio / config.tasa_cambio_dia).toFixed(2)}) &nbsp;·&nbsp;
+          <strong>Tasa del día:</strong> {config.tasa_cambio_dia.toFixed(2)} Bs/$
         </p>
         <table>
           <thead>
@@ -276,7 +311,9 @@ export default function Reportes({ config }: { config: ConfigRow }) {
               <th>Fecha</th>
               <th>N° ventas</th>
               <th>Total Bs</th>
+              <th>Total USD</th>
               <th>Ganancia Bs</th>
+              <th>Ganancia USD</th>
             </tr>
           </thead>
           <tbody>
@@ -285,12 +322,14 @@ export default function Reportes({ config }: { config: ConfigRow }) {
                 <td>{new Date(f.fecha + "T00:00:00").toLocaleDateString("es-VE")}</td>
                 <td>{f.num_ventas}</td>
                 <td>{f.total_bs.toFixed(2)}</td>
+                <td>{(f.total_bs / config.tasa_cambio_dia).toFixed(2)}</td>
                 <td>{f.ganancia_bs.toFixed(2)}</td>
+                <td>{(f.ganancia_bs / config.tasa_cambio_dia).toFixed(2)}</td>
               </tr>
             ))}
             {filas.length === 0 && (
               <tr>
-                <td colSpan={4}>Sin ventas en ese rango de fechas.</td>
+                <td colSpan={6}>Sin ventas en ese rango de fechas.</td>
               </tr>
             )}
           </tbody>

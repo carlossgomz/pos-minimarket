@@ -8,14 +8,15 @@ import {
   FacturaVentaResumen,
   METODOS_PAGO,
 } from "../types";
+import { normalizarTexto, sqlSinAcentos } from "../busqueda";
+import { fechaHoraVenezuela } from "../fecha";
 
 function hoyISO() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return fechaHoraVenezuela().slice(0, 10);
 }
 
 function haceNDias(n: number) {
-  const d = new Date();
+  const d = new Date(`${hoyISO()}T00:00:00`);
   d.setDate(d.getDate() - n);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
@@ -32,21 +33,25 @@ export default function Facturas({ config }: { config: ConfigRow }) {
 
   async function cargarLista() {
     const db = await getDb();
-    const term = busqueda.trim() ? `%${busqueda.trim()}%` : "%";
+    const termCrudo = busqueda.trim();
+    const term = termCrudo ? `%${termCrudo}%` : "%";
+    const termSinAcentos = termCrudo ? `%${normalizarTexto(termCrudo)}%` : "%";
     const rows = await db.select<FacturaVentaResumen[]>(
       `SELECT id, numero_ticket, fecha_hora, cliente_nombre, cliente_cedula, vendedor_nombre, total_bs, estado
        FROM ventas
        WHERE date(fecha_hora) BETWEEN $1 AND $2
-         AND (numero_ticket LIKE $3 OR cliente_nombre LIKE $3 OR cliente_cedula LIKE $3)
+         AND (numero_ticket LIKE $3 OR ${sqlSinAcentos("cliente_nombre")} LIKE $4 OR cliente_cedula LIKE $3)
        ORDER BY fecha_hora DESC
        LIMIT 200`,
-      [desde, hasta, term]
+      [desde, hasta, term, termSinAcentos]
     );
     setFacturas(rows);
   }
 
+  // Debounce — evita una consulta por cada letra tecleada en la búsqueda.
   useEffect(() => {
-    cargarLista();
+    const timer = setTimeout(cargarLista, 250);
+    return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [desde, hasta, busqueda]);
 

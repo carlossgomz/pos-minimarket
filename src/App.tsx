@@ -14,6 +14,7 @@ import CuadreCaja from "./screens/CuadreCaja";
 import Clientes from "./screens/Clientes";
 import Proveedores from "./screens/Proveedores";
 import Reportes from "./screens/Reportes";
+import Estadisticas from "./screens/Estadisticas";
 import Facturas from "./screens/Facturas";
 import Usuarios from "./screens/Usuarios";
 import Login from "./screens/Login";
@@ -29,14 +30,15 @@ type Tab =
   | "clientes"
   | "proveedores"
   | "reportes"
+  | "estadisticas"
   | "facturas"
   | "usuarios";
 
-// El cajero solo ve estas secciones — todo lo demás (inventario, compras,
-// proveedores, reportes, cuadre de caja, usuarios) es solo para admin. Se
-// filtra acá, en el frontend, no hay bases de datos separadas: es el mismo
-// archivo .db para los dos roles.
-const SECCIONES_CAJERO = new Set<Tab>(["venta", "facturas", "clientes", "cuentas"]);
+// El cajero solo ve estas secciones — compras, proveedores, reportes y
+// usuarios siguen siendo solo para admin. Se filtra acá, en el frontend,
+// no hay bases de datos separadas: es el mismo archivo .db para los dos
+// roles.
+const SECCIONES_CAJERO = new Set<Tab>(["venta", "facturas", "clientes", "cuentas", "inventario", "cuadre"]);
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("venta");
@@ -157,6 +159,33 @@ export default function App() {
     return () => clearInterval(id);
   }, [configSyncLista]);
 
+  // Aviso de productos con stock bajo, crítico o agotado — solo para
+  // admins (el cajero no tiene acceso a Inventario para hacer algo con
+  // esto). Mismo criterio que estadoStock() en precios.ts, en SQL: 1
+  // unidad o menos es "crítico", o por debajo del mínimo configurado.
+  const [productosStockBajo, setProductosStockBajo] = useState(0);
+  const [abrirInventarioFiltrado, setAbrirInventarioFiltrado] = useState(false);
+
+  async function cargarProductosStockBajo() {
+    try {
+      const db = await getDb();
+      const rows = await db.select<{ n: number }[]>(
+        "SELECT COUNT(*) as n FROM productos WHERE activo = 1 AND (stock_actual <= 1 OR stock_actual <= stock_minimo)"
+      );
+      setProductosStockBajo(rows[0]?.n ?? 0);
+    } catch {
+      // si falla, se reintenta solo en el próximo ciclo
+    }
+  }
+
+  useEffect(() => {
+    if (!configSyncLista || usuarioActual?.rol !== "ADMIN") return;
+    cargarProductosStockBajo();
+    const id = setInterval(cargarProductosStockBajo, 20_000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [configSyncLista, usuarioActual]);
+
   useEffect(() => {
     if (!configSyncLista) return;
     check()
@@ -229,15 +258,16 @@ export default function App() {
 
   const TODAS_LAS_PESTANAS: { key: Tab; label: string }[] = [
     { key: "venta", label: "Venta" },
-    { key: "inventario", label: "Inventario" },
-    { key: "movimientos", label: "Movimientos" },
-    { key: "compras", label: "Compras" },
     { key: "cuentas", label: "Cuentas" },
+    { key: "facturas", label: "Facturas" },
+    { key: "movimientos", label: "Movimientos" },
+    { key: "inventario", label: "Inventario" },
     { key: "cuadre", label: "Cuadre de caja" },
+    { key: "compras", label: "Compras" },
     { key: "clientes", label: "Clientes" },
     { key: "proveedores", label: "Proveedores" },
     { key: "reportes", label: "Reportes" },
-    { key: "facturas", label: "Facturas" },
+    { key: "estadisticas", label: "Estadísticas" },
     { key: "usuarios", label: "Usuarios" },
   ];
   const pestanasVisibles = esAdmin
@@ -313,6 +343,19 @@ export default function App() {
               🏷 {pendientesCodigo} sin código de barras
             </button>
           )}
+          {esAdmin && productosStockBajo > 0 && (
+            <button
+              type="button"
+              className="link-btn"
+              style={{ color: "#a32d2d" }}
+              onClick={() => {
+                setAbrirInventarioFiltrado(true);
+                setTab("inventario");
+              }}
+            >
+              ⚠ {productosStockBajo} con stock bajo
+            </button>
+          )}
           {actualizacion && (
             <button type="button" className="link-btn" onClick={instalarActualizacion} disabled={instalando}>
               {instalando ? "Instalando…" : `⬆ Actualizar a ${actualizacion.version}`}
@@ -335,7 +378,14 @@ export default function App() {
 
       <nav className="tabs">
         {pestanasVisibles.map((p) => (
-          <button key={p.key} className={tabEfectivo === p.key ? "tab-activo" : ""} onClick={() => setTab(p.key)}>
+          <button
+            key={p.key}
+            className={tabEfectivo === p.key ? "tab-activo" : ""}
+            onClick={() => {
+              if (p.key !== "inventario") setAbrirInventarioFiltrado(false);
+              setTab(p.key);
+            }}
+          >
             {p.label}
           </button>
         ))}
@@ -349,15 +399,18 @@ export default function App() {
       <div style={{ display: tabEfectivo === "venta" ? "block" : "none" }}>
         <Venta config={config} vendedor={vendedorActual} onTasaVista={cargarConfig} visible={tabEfectivo === "venta"} />
       </div>
-      {esAdmin && tabEfectivo === "inventario" && <Inventario config={config} />}
+      {tabEfectivo === "inventario" && (
+        <Inventario config={config} soloProblemasInicial={abrirInventarioFiltrado} />
+      )}
       {esAdmin && tabEfectivo === "movimientos" && <Movimientos config={config} />}
       {esAdmin && tabEfectivo === "compras" && <Compras config={config} onConfigActualizado={cargarConfig} />}
-      {tabEfectivo === "cuentas" && <Cuentas config={config} />}
-      {esAdmin && tabEfectivo === "cuadre" && <CuadreCaja />}
+      {tabEfectivo === "cuentas" && <Cuentas config={config} esAdmin={esAdmin} />}
+      {tabEfectivo === "cuadre" && <CuadreCaja />}
       {tabEfectivo === "clientes" && <Clientes />}
       {esAdmin && tabEfectivo === "proveedores" && <Proveedores />}
       {esAdmin && tabEfectivo === "usuarios" && <Usuarios />}
       {esAdmin && tabEfectivo === "reportes" && <Reportes config={config} />}
+      {esAdmin && tabEfectivo === "estadisticas" && <Estadisticas config={config} />}
       {tabEfectivo === "facturas" && <Facturas config={config} />}
 
       {mostrarPendientesCodigo && (

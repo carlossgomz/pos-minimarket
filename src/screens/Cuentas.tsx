@@ -292,10 +292,11 @@ function CuentasPorCobrar({ config }: { config: ConfigRow }) {
             <input placeholder="Monto Bs" type="number" step="0.01" value={montoBs} onChange={(e) => setMontoBs(e.target.value)} />
             <input placeholder="Tasa del día" type="number" step="0.01" value={tasaPago} onChange={(e) => setTasaPago(e.target.value)} />
             <select value={metodo} onChange={(e) => setMetodo(e.target.value)}>
-              <option value="EFECTIVO">Efectivo</option>
               <option value="PUNTO_VENTA">Punto de venta</option>
               <option value="BIOPAGO">Biopago</option>
               <option value="PAGO_MOVIL">Pago móvil</option>
+              <option value="EFECTIVO">Efectivo</option>
+              <option value="DIVISAS">Divisas</option>
               <option value="TRANSFERENCIA">Transferencia</option>
             </select>
             <button onClick={confirmarAbono}>Confirmar abono</button>
@@ -512,10 +513,11 @@ function CuentasPorPagar({ config }: { config: ConfigRow }) {
             <input placeholder="Monto Bs" type="number" step="0.01" value={montoBs} onChange={(e) => setMontoBs(e.target.value)} />
             <input placeholder="Tasa del día" type="number" step="0.01" value={tasaPago} onChange={(e) => setTasaPago(e.target.value)} />
             <select value={metodo} onChange={(e) => setMetodo(e.target.value)}>
-              <option value="EFECTIVO">Efectivo</option>
               <option value="PUNTO_VENTA">Punto de venta</option>
               <option value="BIOPAGO">Biopago</option>
               <option value="PAGO_MOVIL">Pago móvil</option>
+              <option value="EFECTIVO">Efectivo</option>
+              <option value="DIVISAS">Divisas</option>
               <option value="TRANSFERENCIA">Transferencia</option>
             </select>
             <input
@@ -535,8 +537,15 @@ function CuentasPorPagar({ config }: { config: ConfigRow }) {
   );
 }
 
-export default function Cuentas({ config }: { config: ConfigRow }) {
+export default function Cuentas({ config, esAdmin }: { config: ConfigRow; esAdmin: boolean }) {
   const [sub, setSub] = useState<"cobrar" | "pagar">("cobrar");
+
+  // El cajero solo ve las cuentas por cobrar de clientes — lo que se le
+  // debe a los proveedores es información administrativa/financiera del
+  // negocio, no algo que necesite ver en el mostrador.
+  if (!esAdmin) {
+    return <CuentasPorCobrar config={config} />;
+  }
 
   return (
     <div>

@@ -10,6 +10,14 @@ class BaseDatosRemota {
     return invoke<T>("db_select", { sql, params: bindValues });
   }
 
+  // Lee directo de la caché local (sin ir a buscar a Turso primero) — para
+  // buscadores mientras se escribe, donde la latencia hasta el servidor se
+  // siente. El dato puede tener hasta unos segundos de atraso; no usar
+  // esto para algo que necesite el valor exacto del momento.
+  selectRapido<T>(sql: string, bindValues: unknown[] = []): Promise<T> {
+    return invoke<T>("db_select_cache", { sql, params: bindValues });
+  }
+
   execute(sql: string, bindValues: unknown[] = []): Promise<{ rowsAffected: number; lastInsertId: number }> {
     return invoke("db_execute", { sql, params: bindValues });
   }

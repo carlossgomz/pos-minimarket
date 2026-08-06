@@ -130,6 +130,7 @@ const MIGRACIONES: &[(i64, &str, &str)] = &[
     (15, "direccion venta", include_str!("../migrations/0015_direccion_venta.sql")),
     (16, "avances de efectivo", include_str!("../migrations/0016_avances_efectivo.sql")),
     (17, "capital externo", include_str!("../migrations/0017_capital_externo.sql")),
+    (18, "codigos de proveedor por producto", include_str!("../migrations/0018_codigos_proveedor_producto.sql")),
 ];
 
 pub async fn ejecutar_migraciones(conn: &libsql::Connection) -> anyhow::Result<()> {
@@ -253,6 +254,27 @@ pub async fn db_select(
         }
     }
 
+    let conn_cache = cache.conectar().await?;
+    let filas = conn_cache.query(&sql, valores).await.map_err(|e| e.to_string())?;
+    filas_a_json(filas).await
+}
+
+/// Lectura contra la caché local directamente, SIN intentar la conexión
+/// remota primero — para las barras de búsqueda mientras se escribe, donde
+/// esperar cada letra a que vaya y vuelva hasta el servidor (Venezuela ↔
+/// EE.UU.) se siente lento. La caché se refresca sola cada pocos segundos
+/// (ver arrancar_tarea_sincronizacion en offline.rs), así que el dato
+/// puede estar unos segundos desactualizado — aceptable para un buscador
+/// mientras se escribe, ya que la venta/compra en sí sigue validándose
+/// contra la base real al confirmarse. NO usar esto para nada que necesite
+/// el dato exacto del momento (stock antes de vender, saldo de crédito).
+#[tauri::command]
+pub async fn db_select_cache(
+    cache: tauri::State<'_, crate::offline::EstadoCache>,
+    sql: String,
+    params: Vec<serde_json::Value>,
+) -> Result<Vec<serde_json::Map<String, serde_json::Value>>, String> {
+    let valores: Vec<libsql::Value> = params.iter().map(json_a_libsql).collect::<Result<_, _>>()?;
     let conn_cache = cache.conectar().await?;
     let filas = conn_cache.query(&sql, valores).await.map_err(|e| e.to_string())?;
     filas_a_json(filas).await

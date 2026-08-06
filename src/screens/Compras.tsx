@@ -12,6 +12,7 @@ import {
   Proveedor,
 } from "../types";
 import { fechaHoraVenezuela } from "../fecha";
+import { normalizarTexto, sqlSinAcentos } from "../busqueda";
 
 // Caja con etiqueta fija arriba del campo — a diferencia del placeholder,
 // la etiqueta no desaparece al escribir, así que siempre queda claro qué
@@ -283,15 +284,20 @@ export default function Compras({
     const nuevasLineas: LineaFacturaBorrador[] = [];
     for (const item of extraida.items) {
       // El código que extrae la IA es el del PROVEEDOR, no el de barras
-      // real — se busca contra ambas columnas por si ya se le había
-      // comprado este producto antes (con o sin código de barras
-      // asignado todavía).
+      // real — se busca contra el código de barras (por si ya tiene uno
+      // real asignado), el código de proveedor "legado" (compatibilidad
+      // con productos de antes de esta tabla) y la tabla de códigos por
+      // proveedor (un mismo producto puede tener un código distinto según
+      // a quién se le compre — así no se duplica al pedirlo a otro
+      // proveedor con su propio código).
       let existente: Producto | null = null;
       const codigo = item.codigo?.trim();
       if (codigo) {
         const rows = await db.select<Producto[]>(
-          "SELECT * FROM productos WHERE codigo_barra = $1 OR codigo_proveedor = $1",
-          [codigo]
+          `SELECT * FROM productos
+           WHERE codigo_barra = $1 OR codigo_proveedor = $1
+              OR id IN (SELECT producto_id FROM codigos_proveedor_producto WHERE proveedor_id = $2 AND codigo = $1)`,
+          [codigo, proveedorId]
         );
         existente = rows[0] ?? null;
       }
@@ -299,7 +305,10 @@ export default function Compras({
         producto_id: existente ? existente.id : crypto.randomUUID(),
         codigo_barra: existente ? existente.codigo_barra : `SINCOD-${crypto.randomUUID()}`,
         codigoProveedor: codigo,
-        nombre: item.nombre,
+        // Si ya existe, se mantiene SU nombre (puede haber sido editado a
+        // mano desde que se compró la primera vez) — nunca el que acaba de
+        // leer la IA de esta factura nueva.
+        nombre: existente ? existente.nombre : item.nombre,
         es_nuevo: !existente,
         categoria: undefined,
         cajas: item.cajas,
@@ -312,6 +321,7 @@ export default function Compras({
         aplicaDescuento: item.aplica_descuento,
         descuentoPct: item.aplica_descuento ? item.descuento_pct ?? 0 : 0,
         costoAnteriorUsd: existente?.costo_actual_usd,
+        stockAnteriorUnidades: existente?.stock_actual,
       });
     }
     setLineas((prev) => [...prev, ...nuevasLineas]);
@@ -344,12 +354,20 @@ export default function Compras({
     }
   }
 
-  function seleccionarProductoExistente(p: Producto) {
+  // mantenerCodigoEscrito: true cuando esto se dispara por encontrar una
+  // coincidencia EXACTA con lo que la persona ya tecleó — puede ser el
+  // código de un proveedor nuevo para este producto, distinto al que
+  // tenía guardado, y justo ESE es el que hay que conservar para guardarlo
+  // como el código de este proveedor. Cuando en cambio se elige de la
+  // lista de sugerencias por nombre (se pudo haber tecleado parte del
+  // nombre, no un código), no tiene sentido guardar eso como código —
+  // ahí se reemplaza por el código que el sistema ya le conoce al
+  // producto, editable después a mano si hace falta.
+  function seleccionarProductoExistente(p: Producto, mantenerCodigoEscrito = false) {
     setProductoSeleccionado(p);
-    // Se muestra el código del proveedor si ya se conoce (es lo que tiene
-    // sentido en este campo); si todavía no tiene ninguno registrado, se
-    // deja el código de barras (real o el "SINCOD-..." provisional).
-    setCodigoBusqueda(p.codigo_proveedor ?? p.codigo_barra);
+    if (!mantenerCodigoEscrito) {
+      setCodigoBusqueda(p.codigo_proveedor ?? p.codigo_barra);
+    }
     setNombreNuevo(p.nombre);
     setCategoriaNuevo("");
     setMargen(p.margen_porcentaje != null ? String(p.margen_porcentaje) : "30");
@@ -383,18 +401,28 @@ export default function Compras({
     }
     const timer = setTimeout(async () => {
       const db = await getDb();
+      // Coincidencia exacta: por código de barras, por el código de
+      // proveedor "legado" (compatibilidad) o por la tabla de códigos por
+      // proveedor — de la fuente autoritativa, no de la caché local, para
+      // no arriesgarse a duplicar un producto por una lectura desfasada.
       const exactas = await db.select<Producto[]>(
-        "SELECT * FROM productos WHERE codigo_barra = $1 OR codigo_proveedor = $1",
-        [term]
+        `SELECT * FROM productos
+         WHERE codigo_barra = $1 OR codigo_proveedor = $1
+            OR id IN (SELECT producto_id FROM codigos_proveedor_producto WHERE proveedor_id = $2 AND codigo = $1)`,
+        [term, proveedorId]
       );
       if (exactas.length > 0) {
-        seleccionarProductoExistente(exactas[0]);
+        seleccionarProductoExistente(exactas[0], true);
         return;
       }
-      setProductoSeleccionado(null);
-      const rows = await db.select<Producto[]>(
-        "SELECT * FROM productos WHERE codigo_barra LIKE $1 OR codigo_proveedor LIKE $1 OR nombre LIKE $1 ORDER BY nombre LIMIT 6",
-        [`%${term}%`]
+      // Ya no se limpia productoSeleccionado acá aunque este código nuevo
+      // no matchee nada — puede ser justo que la persona esté corrigiendo
+      // el código de un producto que YA eligió (ej. tras encontrarlo por
+      // nombre y ahora tipeando el código real del proveedor nuevo). Solo
+      // se deselecciona con "no es este, crear nuevo" (tratarComoNuevo).
+      const rows = await db.selectRapido<Producto[]>(
+        `SELECT * FROM productos WHERE codigo_barra LIKE $1 OR codigo_proveedor LIKE $1 OR ${sqlSinAcentos("nombre")} LIKE $2 ORDER BY nombre LIMIT 6`,
+        [`%${term}%`, `%${normalizarTexto(term)}%`]
       );
       setResultadosCodigo(rows);
       setMostrarDropdownCodigo(rows.length > 0);
@@ -419,8 +447,16 @@ export default function Compras({
   // En USD, para comparar contra productoSeleccionado.costo_actual_usd
   // (que siempre está en USD) sin importar en qué moneda esté la factura.
   const costoUnitPreviewUsd = moneda === "USD" ? costoUnitPreview : costoUnitPreview / (Number(tasaFactura) || 1);
-  const bajoDePrecio =
-    productoSeleccionado != null && costoUnitPreviewUsd < productoSeleccionado.costo_actual_usd - 0.0001;
+  const stockPrevioPreview = productoSeleccionado?.stock_actual ?? 0;
+  const hayCambioDePrecioPreview =
+    productoSeleccionado != null &&
+    stockPrevioPreview > 0 &&
+    Math.abs(costoUnitPreviewUsd - productoSeleccionado.costo_actual_usd) > 0.0001;
+  const costoPromedioPreview =
+    productoSeleccionado != null && stockPrevioPreview > 0
+      ? (stockPrevioPreview * productoSeleccionado.costo_actual_usd + cantidadPreview * costoUnitPreviewUsd) /
+        (stockPrevioPreview + cantidadPreview)
+      : costoUnitPreviewUsd;
 
   function agregarLinea() {
     setMensaje(null);
@@ -470,6 +506,7 @@ export default function Compras({
           aplicaDescuento,
           descuentoPct: aplicaDescuento ? descuentoNum : 0,
           costoAnteriorUsd: productoSeleccionado.costo_actual_usd,
+          stockAnteriorUnidades: productoSeleccionado.stock_actual,
         },
       ]);
     } else {
@@ -557,18 +594,44 @@ export default function Compras({
     return l.aplicaIva ? costoConDescuento * (1 + l.tasaIva / 100) : costoConDescuento;
   }
 
+  // "Margen" es margen bruto sobre el precio de venta (igual que en
+  // precios.ts) — con costo 2.99 y margen 30%, el precio da 4.27 (2.99 /
+  // 0.70), no 3.89. Se topa en 99.99 para no dividir por cero o un número
+  // negativo si se escribe 100 o más por error.
   function precioBsDeLinea(l: LineaFacturaBorrador) {
-    return costoUsdDeLinea(l) * Number(tasaFactura) * (1 + l.margen_aplicado / 100);
+    const margen = Math.min(Math.max(l.margen_aplicado, 0), 99.99);
+    return (costoUsdDeLinea(l) / (1 - margen / 100)) * Number(tasaFactura);
+  }
+
+  // Costo que queda VIGENTE para el producto tras esta línea — el promedio
+  // ponderado entre el stock que ya tenía (a su costo anterior) y esta
+  // compra nueva. Ya no esperamos a que se agote el stock viejo para
+  // empezar a vender al precio nuevo: el promedio pasa a mandar de una vez,
+  // apenas se guarda la factura.
+  function costoVigenteDeLinea(l: LineaFacturaBorrador) {
+    const costoNuevo = costoUsdDeLinea(l);
+    const stockPrevio = l.stockAnteriorUnidades ?? 0;
+    if (l.costoAnteriorUsd == null || stockPrevio <= 0) return costoNuevo;
+    const cantidadNueva = unidadesTotales(l);
+    return (stockPrevio * l.costoAnteriorUsd + cantidadNueva * costoNuevo) / (stockPrevio + cantidadNueva);
+  }
+
+  function precioVentaVigenteBsDeLinea(l: LineaFacturaBorrador) {
+    const margen = Math.min(Math.max(l.margen_aplicado, 0), 99.99);
+    return (costoVigenteDeLinea(l) / (1 - margen / 100)) * Number(tasaFactura);
   }
 
   const montoTotalUsd = lineas.reduce((acc, l) => acc + costoUsdDeLinea(l) * unidadesTotales(l), 0);
   const montoTotalBs = montoTotalUsd * Number(tasaFactura || "0");
 
-  // Líneas donde el costo que se va a guardar quedó por debajo del costo
-  // que tenía el producto antes de esta factura — puramente informativo,
-  // ya se puede corregir directo en la tabla si hace falta.
-  const lineasQueBajaron = lineas.filter(
-    (l) => l.costoAnteriorUsd != null && costoUsdDeLinea(l) < l.costoAnteriorUsd - 0.0001
+  // Líneas donde el costo vigente que va a quedar tras guardar difiere del
+  // costo que tenía el producto antes de esta factura — puramente
+  // informativo, ya se puede corregir directo en la tabla si hace falta.
+  const lineasConCambioDeCosto = lineas.filter(
+    (l) =>
+      l.costoAnteriorUsd != null &&
+      (l.stockAnteriorUnidades ?? 0) > 0 &&
+      Math.abs(costoVigenteDeLinea(l) - l.costoAnteriorUsd) > 0.0001
   );
 
   async function guardarFactura() {
@@ -614,6 +677,9 @@ export default function Compras({
         costo_unitario_usd: costoUsdDeLinea(l),
         margen_aplicado: l.margen_aplicado,
         precio_venta_bs: precioBsDeLinea(l),
+        costo_vigente_usd: costoVigenteDeLinea(l),
+        margen_vigente: l.margen_aplicado,
+        precio_venta_vigente_bs: precioVentaVigenteBsDeLinea(l),
         aplica_iva: l.aplicaIva,
         tasa_iva_aplicada: l.tasaIva,
         aplica_descuento: l.aplicaDescuento,
@@ -975,12 +1041,14 @@ export default function Compras({
           </div>
         )}
 
-        {bajoDePrecio && productoSeleccionado && (
+        {hayCambioDePrecioPreview && productoSeleccionado && (
           <p className="aviso-credito" style={{ marginTop: 10 }}>
-            ⚠ Este precio (USD {costoUnitPreviewUsd.toFixed(4)}) es más bajo que el costo actual de{" "}
-            <strong>{productoSeleccionado.nombre}</strong> (USD {productoSeleccionado.costo_actual_usd.toFixed(4)}).
-            El stock que ya tenías se sigue vendiendo a su precio hasta agotarse; recién ahí la caja
-            pasa sola a este precio nuevo. Puedes seguir así o ajustar el precio arriba.
+            ⚠ Este precio (USD {costoUnitPreviewUsd.toFixed(4)}) es distinto al costo actual de{" "}
+            <strong>{productoSeleccionado.nombre}</strong> (USD {productoSeleccionado.costo_actual_usd.toFixed(4)}),
+            que todavía tiene {stockPrevioPreview} en stock. Al agregar esta línea, el costo vigente
+            del producto pasa a ser el promedio ponderado entre ese stock y esta compra:{" "}
+            <strong>USD {costoPromedioPreview.toFixed(4)}</strong>. Revísalo antes de agregar la
+            línea — puedes ajustar el precio o el margen arriba.
           </p>
         )}
 
@@ -1160,18 +1228,17 @@ export default function Compras({
           </table>
         </div>
 
-        {lineasQueBajaron.length > 0 && (
+        {lineasConCambioDeCosto.length > 0 && (
           <p className="aviso-credito">
-            ⚠ {lineasQueBajaron.length === 1 ? "Este producto bajó" : "Estos productos bajaron"} de
-            precio:{" "}
-            {lineasQueBajaron
+            ⚠ {lineasConCambioDeCosto.length === 1 ? "Este producto cambia" : "Estos productos cambian"}{" "}
+            de costo vigente al guardar (promedio ponderado con el stock que ya tenían):{" "}
+            {lineasConCambioDeCosto
               .map(
                 (l) =>
-                  `${l.nombre} (USD ${l.costoAnteriorUsd!.toFixed(4)} → ${costoUsdDeLinea(l).toFixed(4)})`
+                  `${l.nombre} (USD ${l.costoAnteriorUsd!.toFixed(4)} → USD ${costoVigenteDeLinea(l).toFixed(4)})`
               )
               .join(", ")}
-            . El stock viejo se sigue vendiendo a su precio hasta agotarse — puedes guardar tal
-            cual o ajustar los valores en la tabla de arriba.
+            . Puedes guardar tal cual o ajustar los valores en la tabla de arriba.
           </p>
         )}
 

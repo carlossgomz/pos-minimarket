@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getDb } from "../db";
 import { precioVentaBsHoy, precioVentaUsd } from "../precios";
 import { fechaHoraVenezuela } from "../fecha";
+import { normalizarTexto, sqlSinAcentos } from "../busqueda";
 import {
   AporteCapitalExterno,
   AvanceEfectivo,
@@ -54,6 +55,10 @@ type TicketAbierto = {
   // true cuando el cajero eligió explícitamente "cobrar completo" ante el
   // aviso de deuda — bloquea que esta venta se cierre a medio pagar.
   bloquearCredito: boolean;
+  // true = "Sumar a la cuenta actual" o "Sumar y abonar": la deuda vieja
+  // se suma al total a cobrar de este ticket. false = "No sumar": la
+  // deuda vieja queda intacta, aparte, y esta venta es independiente.
+  combinarDeuda: boolean;
 };
 
 function ticketVacio(): TicketAbierto {
@@ -69,6 +74,7 @@ function ticketVacio(): TicketAbierto {
     deudaPendienteUsd: 0,
     avisoCreditoResuelto: true,
     bloquearCredito: false,
+    combinarDeuda: false,
   };
 }
 
@@ -77,6 +83,32 @@ function ticketVacio(): TicketAbierto {
 function calcularTotales(carrito: LineaCarrito[]) {
   const subtotal = carrito.reduce((acc, l) => acc + l.precio_unit_bs * l.cantidad, 0);
   return { subtotal, total: subtotal };
+}
+
+// Reparte una lista de pagos entre "lo que cubre un monto objetivo" (ej. la
+// deuda vieja que se está combinando) y "lo que sobra" — en el orden en que
+// se agregaron, partiendo una línea en dos si hace falta. Se usa para saber
+// cuánto de lo que pagó el cliente va a la deuda anterior y cuánto a la
+// venta actual cuando el cajero elige combinarlas.
+function dividirPagos(pagos: LineaPago[], monto: number): { consumidos: LineaPago[]; restantes: LineaPago[] } {
+  let restante = monto;
+  const consumidos: LineaPago[] = [];
+  const restantes: LineaPago[] = [];
+  for (const p of pagos) {
+    if (restante <= 0.001) {
+      restantes.push(p);
+      continue;
+    }
+    if (p.monto_bs <= restante + 0.001) {
+      consumidos.push(p);
+      restante -= p.monto_bs;
+    } else {
+      consumidos.push({ ...p, monto_bs: Number(restante.toFixed(2)) });
+      restantes.push({ ...p, monto_bs: Number((p.monto_bs - restante).toFixed(2)) });
+      restante = 0;
+    }
+  }
+  return { consumidos, restantes };
 }
 
 // Convierte el string guardado (ya en hora de Venezuela) a algo legible,
@@ -127,6 +159,10 @@ export default function Venta({
     pagosReales: LineaPago[];
     esCredito: boolean;
     montoPendienteUsd: number | null;
+    // Si el cajero combinó la deuda vieja: la porción del pago que se le
+    // aplica a esa deuda (no a esta venta), para saldarla con un abono
+    // aparte antes de confirmar la venta — ver ejecutarVentaConfirmada.
+    pagosParaDeuda: LineaPago[];
   } | null>(null);
 
   // Cuando se escanea/escribe un código que no coincide con ningún
@@ -208,8 +244,15 @@ export default function Venta({
   }, [visible]);
 
   const { subtotal, total } = calcularTotales(activo.carrito);
+  // Si el cajero eligió combinar la deuda vieja, el total "a cobrar" de
+  // este ticket la incluye (convertida a la tasa de HOY, igual criterio
+  // que el resto de la app) — pero el total real de la VENTA que se
+  // guarda sigue siendo solo el del carrito (la deuda vieja se salda con
+  // un abono aparte, ver procesarVenta).
+  const deudaBsHoy = activo.combinarDeuda ? activo.deudaPendienteUsd * config.tasa_cambio_dia : 0;
+  const totalConDeuda = total + deudaBsHoy;
   const totalPagado = activo.pagos.reduce((acc, p) => acc + p.monto_bs, 0);
-  const restante = Number((total - totalPagado).toFixed(2));
+  const restante = Number((totalConDeuda - totalPagado).toFixed(2));
   const proximoNumero = `${config.prefijo_caja}-${String(config.proximo_numero_ticket).padStart(6, "0")}`;
   const totalConsumoUsd = consumoInterno.reduce((acc, l) => acc + l.costo_actual_usd * l.cantidad, 0);
 
@@ -282,9 +325,9 @@ export default function Venta({
     }
     const timer = setTimeout(async () => {
       const db = await getDb();
-      const rows = await db.select<Producto[]>(
-        "SELECT * FROM productos WHERE activo = 1 AND (nombre LIKE $1 OR codigo_barra LIKE $1) ORDER BY nombre LIMIT 8",
-        [`%${term}%`]
+      const rows = await db.selectRapido<Producto[]>(
+        `SELECT * FROM productos WHERE activo = 1 AND (${sqlSinAcentos("nombre")} LIKE $1 OR codigo_barra LIKE $2) ORDER BY nombre LIMIT 8`,
+        [`%${normalizarTexto(term)}%`, `%${term}%`]
       );
       setResultados(rows);
       setMostrarDropdown(rows.length > 0);
@@ -303,9 +346,9 @@ export default function Venta({
     }
     const timer = setTimeout(async () => {
       const db = await getDb();
-      const rows = await db.select<Cliente[]>(
-        "SELECT * FROM clientes WHERE cedula LIKE $1 OR nombre LIKE $1 ORDER BY nombre LIMIT 6",
-        [`%${term}%`]
+      const rows = await db.selectRapido<Cliente[]>(
+        `SELECT * FROM clientes WHERE cedula LIKE $1 OR ${sqlSinAcentos("nombre")} LIKE $2 ORDER BY nombre LIMIT 6`,
+        [`%${term}%`, `%${normalizarTexto(term)}%`]
       );
       setClienteResultados(rows);
       setClienteMostrarDropdown(true);
@@ -325,9 +368,9 @@ export default function Venta({
     }
     const timer = setTimeout(async () => {
       const db = await getDb();
-      const rows = await db.select<Producto[]>(
-        "SELECT * FROM productos WHERE activo = 1 AND (nombre LIKE $1 OR codigo_barra LIKE $1) ORDER BY nombre LIMIT 8",
-        [`%${term}%`]
+      const rows = await db.selectRapido<Producto[]>(
+        `SELECT * FROM productos WHERE activo = 1 AND (${sqlSinAcentos("nombre")} LIKE $1 OR codigo_barra LIKE $2) ORDER BY nombre LIMIT 8`,
+        [`%${normalizarTexto(term)}%`, `%${term}%`]
       );
       setResultadosConsumo(rows);
       setMostrarDropdownConsumo(rows.length > 0);
@@ -371,7 +414,7 @@ export default function Venta({
     if (!codigo) return;
 
     const db = await getDb();
-    const rows = await db.select<Producto[]>("SELECT * FROM productos WHERE codigo_barra = $1 AND activo = 1", [codigo]);
+    const rows = await db.selectRapido<Producto[]>("SELECT * FROM productos WHERE codigo_barra = $1 AND activo = 1", [codigo]);
     if (rows.length === 0) {
       setMensajeConsumo(`No se encontró ningún producto activo con código "${codigo}".`);
       setBusquedaConsumo("");
@@ -570,6 +613,7 @@ export default function Venta({
       deudaPendienteUsd: 0,
       avisoCreditoResuelto: true,
       bloquearCredito: false,
+      combinarDeuda: false,
     });
     setClienteBusqueda("");
     setClienteResultados([]);
@@ -604,6 +648,7 @@ export default function Venta({
       deudaPendienteUsd: 0,
       avisoCreditoResuelto: true,
       bloquearCredito: false,
+      combinarDeuda: false,
     });
   }
 
@@ -680,7 +725,7 @@ export default function Venta({
     if (!codigo) return;
 
     const db = await getDb();
-    const rows = await db.select<Producto[]>(
+    const rows = await db.selectRapido<Producto[]>(
       "SELECT * FROM productos WHERE codigo_barra = $1 AND activo = 1",
       [codigo]
     );
@@ -798,7 +843,10 @@ export default function Venta({
     }
 
     const totalPagadoBase = pagosBase.reduce((acc, p) => acc + p.monto_bs, 0);
-    const restanteBase = Number((total - totalPagadoBase).toFixed(2));
+    // Contra el total COMBINADO (carrito + deuda vieja si se eligió sumarla)
+    // — así "cobrar completo" y el aviso de crédito consideran todo lo que
+    // hay que cubrir, no solo el carrito.
+    const restanteBase = Number((totalConDeuda - totalPagadoBase).toFixed(2));
 
     const esCredito = restanteBase > 0.01;
     if (esCredito && activo.bloquearCredito) {
@@ -834,16 +882,32 @@ export default function Venta({
       return;
     }
 
-    const montoPendienteUsd = esCredito ? restanteBase / config.tasa_cambio_dia : null;
-    const pagosReales = [...pagosBase];
-    if (esCredito) {
-      pagosReales.push({ metodo: "CREDITO", monto_bs: restanteBase });
+    // Si se combinó la deuda vieja, lo que se pagó se aplica PRIMERO a esa
+    // deuda (se salda con un abono aparte) y lo que sobra a esta venta —
+    // en ese orden, para que "sumar y abonar" con un pago que no alcanza
+    // para todo primero reduzca la deuda más vieja, igual criterio que ya
+    // usa un abono normal.
+    let pagosParaDeuda: LineaPago[] = [];
+    let pagosParaVenta = pagosBase;
+    if (activo.combinarDeuda && deudaBsHoy > 0.01) {
+      const dividido = dividirPagos(pagosBase, deudaBsHoy);
+      pagosParaDeuda = dividido.consumidos;
+      pagosParaVenta = dividido.restantes;
+    }
+
+    const totalPagadoVenta = pagosParaVenta.reduce((acc, p) => acc + p.monto_bs, 0);
+    const restanteVenta = Number((total - totalPagadoVenta).toFixed(2));
+    const ventaEsCredito = restanteVenta > 0.01;
+    const montoPendienteUsd = ventaEsCredito ? restanteVenta / config.tasa_cambio_dia : null;
+    const pagosReales = [...pagosParaVenta];
+    if (ventaEsCredito) {
+      pagosReales.push({ metodo: "CREDITO", monto_bs: restanteVenta });
     }
 
     // No se guarda todavía — se muestra el resumen para que la caja
     // confirme (ver ejecutarVentaConfirmada, que es quien de verdad llama
     // a confirmar_venta).
-    setConfirmacionVenta({ pagosReales, esCredito, montoPendienteUsd });
+    setConfirmacionVenta({ pagosReales, esCredito: ventaEsCredito, montoPendienteUsd, pagosParaDeuda });
   }
 
   function confirmarVenta() {
@@ -856,12 +920,37 @@ export default function Venta({
 
   async function ejecutarVentaConfirmada() {
     if (!confirmacionVenta || guardando) return;
-    const { pagosReales, montoPendienteUsd, esCredito } = confirmacionVenta;
+    const { pagosReales, montoPendienteUsd, esCredito, pagosParaDeuda } = confirmacionVenta;
     const carrito = activo.carrito;
 
     setGuardando(true);
     const id = crypto.randomUUID();
     const fechaHora = fechaHoraVenezuela();
+
+    // Si se combinó la deuda vieja, primero se salda (parcial o total)
+    // con un abono aparte por cada línea de pago que le corresponde —
+    // antes de registrar la venta actual, para que el orden en el
+    // historial del cliente quede correcto (se abona la deuda vieja, y
+    // recién después se genera el nuevo ticket).
+    if (pagosParaDeuda.length > 0 && activo.clienteCedula) {
+      for (const p of pagosParaDeuda) {
+        try {
+          await invoke("registrar_abono_cliente_total", {
+            input: {
+              cliente_cedula: activo.clienteCedula,
+              monto_usd: p.monto_bs / config.tasa_cambio_dia,
+              tasa_cambio_dia: config.tasa_cambio_dia,
+              metodo: p.metodo,
+            },
+          });
+        } catch (e) {
+          setMensaje(`No se pudo aplicar el abono a la deuda anterior: ${String(e)}`);
+          setGuardando(false);
+          setConfirmacionVenta(null);
+          return;
+        }
+      }
+    }
 
     let numeroTicket: string;
     let sinConexion: boolean;
@@ -1220,35 +1309,43 @@ export default function Venta({
                   <div className="form-row">
                     <button
                       type="button"
-                      disabled={!activo.clienteCreditoAutorizado}
-                      title={
-                        activo.clienteCreditoAutorizado
-                          ? ""
-                          : "Este cliente no tiene crédito autorizado — actívalo en su ficha primero."
+                      title="El total a cobrar de este ticket pasa a incluir la deuda vieja — hay que cubrirlo completo."
+                      onClick={() =>
+                        actualizarActivo({ avisoCreditoResuelto: true, bloquearCredito: true, combinarDeuda: true })
                       }
-                      onClick={() => actualizarActivo({ avisoCreditoResuelto: true, bloquearCredito: false })}
                     >
-                      Sumarla a su cuenta
+                      Sumar a la cuenta actual
                     </button>
                     <button
                       type="button"
-                      onClick={() => actualizarActivo({ avisoCreditoResuelto: true, bloquearCredito: true })}
+                      title="La deuda vieja queda aparte, sin tocar — esta venta es independiente."
+                      onClick={() =>
+                        actualizarActivo({ avisoCreditoResuelto: true, bloquearCredito: false, combinarDeuda: false })
+                      }
                     >
-                      No, cobrar completo
+                      No sumar
                     </button>
                     <button
                       type="button"
                       disabled={!activo.clienteCreditoAutorizado}
                       title={
                         activo.clienteCreditoAutorizado
-                          ? ""
+                          ? "Se suma la deuda vieja a esta venta, pero se puede pagar solo una parte — el resto queda como el nuevo crédito."
                           : "Este cliente no tiene crédito autorizado — actívalo en su ficha primero."
                       }
-                      onClick={() => actualizarActivo({ avisoCreditoResuelto: true, bloquearCredito: false })}
+                      onClick={() =>
+                        actualizarActivo({ avisoCreditoResuelto: true, bloquearCredito: false, combinarDeuda: true })
+                      }
                     >
-                      Cobra una parte, el resto a la cuenta
+                      Sumar y abonar
                     </button>
                   </div>
+                  {activo.combinarDeuda && (
+                    <p className="hint" style={{ marginTop: 6 }}>
+                      Total a cobrar ahora: Bs {totalConDeuda.toFixed(2)} (carrito Bs {total.toFixed(2)} + deuda
+                      vieja Bs {deudaBsHoy.toFixed(2)}).
+                    </p>
+                  )}
                 </div>
               )}
             </>
@@ -1331,9 +1428,17 @@ export default function Venta({
                 type="button"
                 className="cobro-rapido-btn"
                 disabled={guardando}
-                onClick={() => cobrarRapido("EFECTIVO")}
+                onClick={() => cobrarRapido("PUNTO_VENTA")}
               >
-                Efectivo · Bs {restante.toFixed(2)}
+                Punto de venta · Bs {restante.toFixed(2)}
+              </button>
+              <button
+                type="button"
+                className="cobro-rapido-btn"
+                disabled={guardando}
+                onClick={() => cobrarRapido("BIOPAGO")}
+              >
+                Biopago · Bs {restante.toFixed(2)}
               </button>
               <button
                 type="button"
@@ -1347,17 +1452,25 @@ export default function Venta({
                 type="button"
                 className="cobro-rapido-btn"
                 disabled={guardando}
-                onClick={() => cobrarRapido("PUNTO_VENTA")}
+                onClick={() => cobrarRapido("EFECTIVO")}
               >
-                Punto de venta · Bs {restante.toFixed(2)}
+                Efectivo · Bs {restante.toFixed(2)}
               </button>
               <button
                 type="button"
                 className="cobro-rapido-btn"
                 disabled={guardando}
-                onClick={() => cobrarRapido("BIOPAGO")}
+                onClick={() => cobrarRapido("DIVISAS")}
               >
-                Biopago · Bs {restante.toFixed(2)}
+                Divisas · Bs {restante.toFixed(2)}
+              </button>
+              <button
+                type="button"
+                className="cobro-rapido-btn"
+                disabled={guardando}
+                onClick={() => cobrarRapido("TRANSFERENCIA")}
+              >
+                Transferencia · Bs {restante.toFixed(2)}
               </button>
             </div>
           )}
@@ -1757,11 +1870,21 @@ export default function Venta({
               {activo.clienteNombre ? `${activo.clienteNombre} (${activo.clienteCedula})` : "Consumidor final"}
               {activo.clienteDireccion ? ` — ${activo.clienteDireccion}` : ""}
             </p>
+            {confirmacionVenta.pagosParaDeuda.length > 0 && (
+              <p className="hint">
+                Abono a la deuda anterior:{" "}
+                {confirmacionVenta.pagosParaDeuda
+                  .map((p) => `${p.metodo.split("_").join(" ")} Bs ${p.monto_bs.toFixed(2)}`)
+                  .join(" · ")}
+              </p>
+            )}
             <p>
-              Pago:{" "}
-              {confirmacionVenta.pagosReales
-                .map((p) => `${p.metodo.split("_").join(" ")} Bs ${p.monto_bs.toFixed(2)}`)
-                .join(" · ")}
+              Pago de esta venta:{" "}
+              {confirmacionVenta.pagosReales.length > 0
+                ? confirmacionVenta.pagosReales
+                    .map((p) => `${p.metodo.split("_").join(" ")} Bs ${p.monto_bs.toFixed(2)}`)
+                    .join(" · ")
+                : "—"}
             </p>
             <p className="ticket-total">
               Total: Bs {total.toFixed(2)}{" "}

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getDb } from "../db";
 import { Cliente, VentaResumen } from "../types";
+import { normalizarTexto, sqlSinAcentos } from "../busqueda";
 
 export default function Clientes() {
   const [clientes, setClientes] = useState<Cliente[]>([]);
@@ -20,15 +21,17 @@ export default function Clientes() {
     const term = busqueda.trim();
     const rows = term
       ? await db.select<Cliente[]>(
-          "SELECT * FROM clientes WHERE nombre LIKE $1 OR cedula LIKE $1 ORDER BY nombre",
-          [`%${term}%`]
+          `SELECT * FROM clientes WHERE ${sqlSinAcentos("nombre")} LIKE $1 OR cedula LIKE $2 ORDER BY nombre`,
+          [`%${normalizarTexto(term)}%`, `%${term}%`]
         )
       : await db.select<Cliente[]>("SELECT * FROM clientes ORDER BY nombre");
     setClientes(rows);
   }
 
+  // Debounce — evita una consulta por cada letra tecleada.
   useEffect(() => {
-    cargarClientes();
+    const timer = setTimeout(cargarClientes, 250);
+    return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busqueda]);
 

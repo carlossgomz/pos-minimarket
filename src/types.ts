@@ -107,10 +107,13 @@ export type LineaFacturaBorrador = {
   tasaIva: number;
   aplicaDescuento: boolean;
   descuentoPct: number;
-  // Costo que tenía el producto ANTES de esta línea — solo para productos
-  // existentes, y solo para poder avisar si el precio bajó. No se manda
-  // al backend, es puramente informativo en el frontend.
+  // Costo y stock que tenía el producto ANTES de esta línea — solo para
+  // productos existentes. Con esto se calcula el costo vigente nuevo como
+  // promedio ponderado (ver costoVigenteDeLinea en Compras.tsx): no se
+  // mandan tal cual al backend, pero costoVigenteDeLinea sí se manda como
+  // costo_vigente_usd.
   costoAnteriorUsd?: number;
+  stockAnteriorUnidades?: number;
 };
 
 // Lo que devuelve el comando de Rust escanear_factura (src-tauri/src/ia.rs)
@@ -312,11 +315,14 @@ export type AvanceEfectivo = {
   created_at: string;
 };
 
+// Orden de más a menos usado en este negocio — así el más común queda
+// primero en cada selector/lista, para que el proceso sea más rápido.
 export const METODOS_PAGO = [
-  "EFECTIVO",
   "PUNTO_VENTA",
   "BIOPAGO",
   "PAGO_MOVIL",
+  "EFECTIVO",
+  "DIVISAS",
   "TRANSFERENCIA",
 ] as const;
 

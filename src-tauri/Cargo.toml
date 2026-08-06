@@ -23,3 +23,15 @@ libsql = { version = "0.9", features = ["remote"] }
 tokio = { version = "1", features = ["rt-multi-thread"] }
 anyhow = "1"
 reqwest = { version = "0.12", features = ["json"] }
+
+# Perfil de release afinado para máquinas viejas/lentas (el objetivo del
+# negocio): un binario más chico carga más rápido desde un disco lento, y
+# LTO + un solo codegen-unit generan código bastante más rápido a costa de
+# compilar más lento en CI — un trade-off que vale la pena porque esto
+# compila una sola vez por versión, no en cada arranque de la app.
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

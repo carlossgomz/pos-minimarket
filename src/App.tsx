@@ -20,6 +20,7 @@ import Facturas from "./screens/Facturas";
 import Usuarios from "./screens/Usuarios";
 import Login from "./screens/Login";
 import PendientesCodigoBarras from "./screens/PendientesCodigoBarras";
+import logo from "./assets/logo.png";
 
 type Tab =
   | "venta"
@@ -306,7 +307,7 @@ export default function App() {
   return (
     <div className="page">
       <header className="header">
-        <h1>{config.nombre_negocio}</h1>
+        <img src={logo} alt={config.nombre_negocio} className="logo-header" />
         <div className="tasa">
           <label>Vendedor</label>
           {!mostrarNuevoVendedor ? (

@@ -55,6 +55,11 @@ body {
   white-space: nowrap;
 }
 
+.logo-header {
+  height: 44px;
+  width: auto;
+}
+
 .tasa {
   display: flex;
   align-items: center;
@@ -489,6 +494,13 @@ th {
 .ticket-empresa {
   font-weight: 600;
   font-size: 16px;
+}
+
+.ticket-logo {
+  display: block;
+  height: 60px;
+  width: auto;
+  margin: 0 auto 8px;
 }
 
 .ticket-meta {

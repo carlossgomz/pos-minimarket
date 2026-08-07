@@ -10,6 +10,7 @@ import {
 } from "../types";
 import { normalizarTexto, sqlSinAcentos } from "../busqueda";
 import { fechaHoraVenezuela } from "../fecha";
+import logo from "../assets/logo.png";
 
 function hoyISO() {
   return fechaHoraVenezuela().slice(0, 10);
@@ -171,7 +172,7 @@ export default function Facturas({ config }: { config: ConfigRow }) {
         ) : (
           <div className="ticket">
             <h2>Factura {seleccionada.numero_ticket}</h2>
-            <p className="ticket-empresa">{config.nombre_negocio}</p>
+            <img src={logo} alt={config.nombre_negocio} className="ticket-logo" />
             <p className="ticket-meta">
               {formatearFechaHora(seleccionada.fecha_hora)}
               <br />

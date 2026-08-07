@@ -16,6 +16,7 @@ import {
   Producto,
   Vendedor,
 } from "../types";
+import logo from "../assets/logo.png";
 
 const MAX_TICKETS_ABIERTOS = 6;
 
@@ -1076,7 +1077,7 @@ export default function Venta({
             ⚠ Guardada sin conexión — el número de ticket es provisional y se ajustará solo cuando vuelva internet.
           </p>
         )}
-        <p className="ticket-empresa">{config.nombre_negocio}</p>
+        <img src={logo} alt={config.nombre_negocio} className="ticket-logo" />
         <p className="ticket-meta">
           Ticket {recibo.numero} — {formatearFechaHora(recibo.fechaHora)}
           <br />

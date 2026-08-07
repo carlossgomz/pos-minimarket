@@ -23,6 +23,9 @@
     "allow-guardar-factura-compra",
     "allow-editar-factura-compra",
     "allow-eliminar-factura-compra",
-    "allow-desglosar-producto"
+    "allow-desglosar-producto",
+    "allow-sincronizar-catalogo-delivery",
+    "allow-obtener-pedidos-delivery-pendientes",
+    "shell:allow-open"
   ]
 }

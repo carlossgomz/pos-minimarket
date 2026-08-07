@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { check, Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { open } from "@tauri-apps/plugin-shell";
 import { getDb } from "./db";
 import { ConfigRow, Usuario, Vendedor } from "./types";
 import ConfiguracionSync from "./screens/ConfiguracionSync";
@@ -82,7 +83,7 @@ export default function App() {
     try {
       const db = await getDb();
       const rows = await db.select<ConfigRow[]>(
-        "SELECT tasa_cambio_dia, nombre_negocio, rif_negocio, prefijo_caja, proximo_numero_ticket, vendedor_actual_id, gemini_api_key FROM config WHERE id = 1"
+        "SELECT tasa_cambio_dia, nombre_negocio, rif_negocio, prefijo_caja, proximo_numero_ticket, vendedor_actual_id, gemini_api_key, delivery_api_url FROM config WHERE id = 1"
       );
       setConfig(rows[0] ?? null);
     } catch (e) {
@@ -159,10 +160,10 @@ export default function App() {
     return () => clearInterval(id);
   }, [configSyncLista]);
 
-  // Aviso de productos con stock bajo, crítico o agotado — solo para
-  // admins (el cajero no tiene acceso a Inventario para hacer algo con
-  // esto). Mismo criterio que estadoStock() en precios.ts, en SQL: 1
-  // unidad o menos es "crítico", o por debajo del mínimo configurado.
+  // Aviso de productos en 1 unidad o agotados — solo para admins (el
+  // cajero no tiene acceso a Inventario para hacer algo con esto). A
+  // pedido explícito, ya no cuenta el "stock bajo" por mínimo configurable
+  // (generaba demasiado ruido) — solo los casos duros: 0 o 1 unidad.
   const [productosStockBajo, setProductosStockBajo] = useState(0);
   const [abrirInventarioFiltrado, setAbrirInventarioFiltrado] = useState(false);
 
@@ -170,7 +171,7 @@ export default function App() {
     try {
       const db = await getDb();
       const rows = await db.select<{ n: number }[]>(
-        "SELECT COUNT(*) as n FROM productos WHERE activo = 1 AND (stock_actual <= 1 OR stock_actual <= stock_minimo)"
+        "SELECT COUNT(*) as n FROM productos WHERE activo = 1 AND stock_actual <= 1"
       );
       setProductosStockBajo(rows[0]?.n ?? 0);
     } catch {
@@ -182,6 +183,29 @@ export default function App() {
     if (!configSyncLista || usuarioActual?.rol !== "ADMIN") return;
     cargarProductosStockBajo();
     const id = setInterval(cargarProductosStockBajo, 20_000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [configSyncLista, usuarioActual]);
+
+  // Pedidos de delivery recién llegados sin revisar (ver delivery.rs, tarea
+  // de fondo cada ~30s) — mismo criterio que el aviso de stock: solo admin,
+  // porque es quien tiene forma de hacer algo al respecto.
+  const [pedidosDeliveryPendientes, setPedidosDeliveryPendientes] = useState(0);
+
+  async function cargarPedidosDeliveryPendientes() {
+    try {
+      setPedidosDeliveryPendientes(await invoke<number>("obtener_pedidos_delivery_pendientes"));
+    } catch {
+      // si falla, se reintenta solo en el próximo ciclo
+    }
+  }
+
+  useEffect(() => {
+    if (!configSyncLista || usuarioActual?.rol !== "ADMIN") return;
+    cargarPedidosDeliveryPendientes();
+    // Cada 5s, igual que la tarea de fondo en Rust que llena este dato —
+    // el aviso de pedido pendiente tiene que sentirse casi inmediato.
+    const id = setInterval(cargarPedidosDeliveryPendientes, 5_000);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [configSyncLista, usuarioActual]);
@@ -353,7 +377,21 @@ export default function App() {
                 setTab("inventario");
               }}
             >
-              ⚠ {productosStockBajo} con stock bajo
+              ⚠ {productosStockBajo} en 1 unidad o agotados
+            </button>
+          )}
+          {esAdmin && pedidosDeliveryPendientes > 0 && (
+            <button
+              type="button"
+              className="link-btn"
+              style={{ color: "#1a6b8f" }}
+              onClick={() => {
+                if (config?.delivery_api_url) open(`${config.delivery_api_url}/admin/pedidos`);
+              }}
+              title="Abrir los pedidos en la app de delivery"
+            >
+              📦 {pedidosDeliveryPendientes} pedido{pedidosDeliveryPendientes === 1 ? "" : "s"} de
+              delivery pendiente{pedidosDeliveryPendientes === 1 ? "" : "s"}
             </button>
           )}
           {actualizacion && (
@@ -408,7 +446,7 @@ export default function App() {
       {tabEfectivo === "cuadre" && <CuadreCaja />}
       {tabEfectivo === "clientes" && <Clientes />}
       {esAdmin && tabEfectivo === "proveedores" && <Proveedores />}
-      {esAdmin && tabEfectivo === "usuarios" && <Usuarios />}
+      {esAdmin && tabEfectivo === "usuarios" && <Usuarios usuarioActual={usuarioActual} />}
       {esAdmin && tabEfectivo === "reportes" && <Reportes config={config} />}
       {esAdmin && tabEfectivo === "estadisticas" && <Estadisticas config={config} />}
       {tabEfectivo === "facturas" && <Facturas config={config} />}

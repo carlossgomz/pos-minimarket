@@ -23,6 +23,12 @@ libsql = { version = "0.9", features = ["remote"] }
 tokio = { version = "1", features = ["rt-multi-thread"] }
 anyhow = "1"
 reqwest = { version = "0.12", features = ["json"] }
+# Solo para convertir el "entregadoAt" (UTC) que manda la delivery-app a la
+# hora local de Venezuela (UTC-4 fijo, sin horario de verano) con el mismo
+# formato "YYYY-MM-DD HH:MM:SS" que usa fecha_hora en toda la app — hacer
+# esa aritmética de calendario a mano (meses, años bisiestos) es fácil de
+# arruinar, y acá alimenta el cuadre de caja diario.
+chrono = "0.4"
 
 # Perfil de release afinado para máquinas viejas/lentas (el objetivo del
 # negocio): un binario más chico carga más rápido desde un disco lento, y

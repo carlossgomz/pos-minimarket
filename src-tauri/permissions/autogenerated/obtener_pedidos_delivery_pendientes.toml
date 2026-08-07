@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-obtener-pedidos-delivery-pendientes"
+description = "Enables the obtener_pedidos_delivery_pendientes command without any pre-configured scope."
+commands.allow = ["obtener_pedidos_delivery_pendientes"]
+
+[[permission]]
+identifier = "deny-obtener-pedidos-delivery-pendientes"
+description = "Denies the obtener_pedidos_delivery_pendientes command without any pre-configured scope."
+commands.deny = ["obtener_pedidos_delivery_pendientes"]

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getDb } from "../db";
 import { Producto } from "../types";
+import { formatearStock } from "../precios";
 
 // Ventana temporal (no una pestaña fija) visible desde CUALQUIER sección
 // para cualquier rol — el cajero no tiene acceso a Inventario, pero es
@@ -82,7 +83,7 @@ export default function PendientesCodigoBarras({
                   <tr key={p.id}>
                     <td>{p.nombre}</td>
                     <td>{p.codigo_proveedor ?? "—"}</td>
-                    <td>{p.stock_actual}</td>
+                    <td>{formatearStock(p.stock_actual)}</td>
                     <td>
                       <input
                         className="cant-input"

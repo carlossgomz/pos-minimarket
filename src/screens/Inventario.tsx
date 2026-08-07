@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { getDb } from "../db";
 import { Categoria, ConfigRow, ProductoInventario } from "../types";
-import { estadoStock, gananciaUnitariaUsd, precioVentaBsHoy, precioVentaUsd } from "../precios";
+import { estadoStock, formatearStock, gananciaUnitariaUsd, precioVentaBsHoy, precioVentaUsd } from "../precios";
 import { fechaHoraVenezuela } from "../fecha";
 import { normalizarTexto, sqlSinAcentos } from "../busqueda";
 
@@ -26,6 +27,7 @@ export default function Inventario({
   const [mensaje, setMensaje] = useState<string | null>(null);
 
   const [busqueda, setBusqueda] = useState("");
+  const [categoriaFiltro, setCategoriaFiltro] = useState("");
   const [soloProblemas, setSoloProblemas] = useState(soloProblemasInicial ?? false);
   // El catálogo completo puede ser cientos de productos — sin paginar,
   // cada uno con varios <input>/<select> editables, la tabla entera se
@@ -87,16 +89,25 @@ export default function Inventario({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busqueda]);
 
-  const productosFiltrados = useMemo(
-    () => (soloProblemas ? productos.filter((p) => estadoStock(p) !== "ok") : productos),
-    [productos, soloProblemas]
-  );
+  // "Problema" acá son solo los casos duros (agotado o 1 sola unidad) — el
+  // "stock bajo" por mínimo configurable ya no cuenta como advertencia,
+  // a pedido explícito (generaba demasiado ruido con cientos de productos).
+  const productosFiltrados = useMemo(() => {
+    let base = productos;
+    if (soloProblemas) {
+      base = base.filter((p) => estadoStock(p) === "agotado" || estadoStock(p) === "critico");
+    }
+    if (categoriaFiltro) {
+      base = base.filter((p) => p.categoria_id === categoriaFiltro);
+    }
+    return base;
+  }, [productos, soloProblemas, categoriaFiltro]);
 
   const totalPaginas = Math.max(1, Math.ceil(productosFiltrados.length / TAMANO_PAGINA));
 
   useEffect(() => {
     setPagina(0);
-  }, [busqueda, soloProblemas]);
+  }, [busqueda, soloProblemas, categoriaFiltro]);
 
   useEffect(() => {
     if (pagina > totalPaginas - 1) setPagina(totalPaginas - 1);
@@ -212,6 +223,30 @@ export default function Inventario({
     await cargar();
   }
 
+  async function actualizarDisponibleDelivery(p: ProductoInventario, disponible: boolean) {
+    const db = await getDb();
+    await db.execute("UPDATE productos SET disponible_delivery = $1 WHERE id = $2", [
+      disponible ? 1 : 0,
+      p.id,
+    ]);
+    await cargar();
+  }
+
+  const [sincronizandoDelivery, setSincronizandoDelivery] = useState(false);
+
+  async function sincronizarDelivery() {
+    setSincronizandoDelivery(true);
+    setMensaje(null);
+    try {
+      const n = await invoke<number>("sincronizar_catalogo_delivery");
+      setMensaje(`Catálogo sincronizado con la app de delivery (${n} productos).`);
+    } catch (e) {
+      setMensaje(`No se pudo sincronizar con delivery: ${String(e)}`);
+    } finally {
+      setSincronizandoDelivery(false);
+    }
+  }
+
   // Un producto solo se puede borrar del todo si nunca se vendió, compró
   // ni tuvo ningún movimiento — si tiene historia, borrarlo dejaría huecos
   // en ventas/facturas viejas (el nombre desaparecería de esos registros),
@@ -292,21 +327,37 @@ export default function Inventario({
               onChange={(e) => setBusqueda(e.target.value)}
               style={{ flex: 2 }}
             />
+            <select value={categoriaFiltro} onChange={(e) => setCategoriaFiltro(e.target.value)}>
+              <option value="">Todas las categorías</option>
+              {categorias.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.nombre}
+                </option>
+              ))}
+            </select>
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
               <input
                 type="checkbox"
                 checked={soloProblemas}
                 onChange={(e) => setSoloProblemas(e.target.checked)}
               />
-              Solo stock bajo, crítico o agotado
+              Solo crítico (1 unidad) o agotado
             </label>
           </div>
 
           <div className="form-row" style={{ alignItems: "center", justifyContent: "space-between" }}>
             <h2 style={{ marginTop: 16 }}>
               Catálogo ({productosFiltrados.length}
-              {soloProblemas ? ` de ${productos.length}` : ""})
+              {soloProblemas || categoriaFiltro ? ` de ${productos.length}` : ""})
             </h2>
+            <button
+              type="button"
+              className="no-print"
+              onClick={sincronizarDelivery}
+              disabled={sincronizandoDelivery}
+            >
+              {sincronizandoDelivery ? "Sincronizando…" : "Sincronizar con delivery ahora"}
+            </button>
             <button type="button" className="no-print" onClick={() => window.print()}>
               Imprimir lista para conteo
             </button>
@@ -347,6 +398,7 @@ export default function Inventario({
                   <th>Salidas</th>
                   <th>Stock</th>
                   <th>Estado</th>
+                  <th>Delivery</th>
                   <th></th>
                 </tr>
               </thead>
@@ -359,7 +411,7 @@ export default function Inventario({
                       <td>
                         <input
                           className="cant-input"
-                          style={{ width: 100 }}
+                          style={{ width: 82 }}
                           defaultValue={p.codigo_barra}
                           onBlur={(e) => actualizarCodigo(p, e.target.value)}
                         />
@@ -367,7 +419,7 @@ export default function Inventario({
                       <td>
                         <input
                           className="cant-input"
-                          style={{ width: 150 }}
+                          style={{ width: 250 }}
                           defaultValue={p.nombre}
                           onBlur={(e) => actualizarNombre(p, e.target.value)}
                         />
@@ -376,6 +428,7 @@ export default function Inventario({
                         <select
                           value={p.categoria_id ?? ""}
                           onChange={(e) => actualizarCategoria(p, e.target.value)}
+                          style={{ width: 105, fontSize: 12 }}
                         >
                           <option value="">Sin categoría</option>
                           {categorias.map((c) => (
@@ -388,7 +441,7 @@ export default function Inventario({
                       <td>
                         <input
                           className="cant-input"
-                          style={{ width: 90 }}
+                          style={{ width: 68 }}
                           type="number"
                           step="0.01"
                           defaultValue={p.costo_actual_usd}
@@ -401,7 +454,7 @@ export default function Inventario({
                       <td>
                         <input
                           className="cant-input"
-                          style={{ width: 65 }}
+                          style={{ width: 48 }}
                           type="number"
                           step="1"
                           defaultValue={p.margen_porcentaje ?? 0}
@@ -417,7 +470,7 @@ export default function Inventario({
                       <td>{rentabilidadPct.toFixed(1)}%</td>
                       <td>{p.entradas_totales}</td>
                       <td>{p.salidas_totales}</td>
-                      <td>{p.stock_actual}</td>
+                      <td>{formatearStock(p.stock_actual)}</td>
                       <td>
                         {estado === "agotado" && <span className="badge badge-agotado">Agotado</span>}
                         {estado === "critico" && <span className="badge badge-critico">¡Última unidad!</span>}
@@ -428,6 +481,14 @@ export default function Inventario({
                             Inactivo
                           </span>
                         )}
+                      </td>
+                      <td style={{ textAlign: "center" }}>
+                        <input
+                          type="checkbox"
+                          checked={!!p.disponible_delivery}
+                          onChange={(e) => actualizarDisponibleDelivery(p, e.target.checked)}
+                          title="Se ofrece en la app de delivery"
+                        />
                       </td>
                       <td>
                         {!p.activo && (
@@ -448,7 +509,7 @@ export default function Inventario({
                 })}
                 {productosFiltrados.length === 0 && (
                   <tr>
-                    <td colSpan={14} className="empty">
+                    <td colSpan={15} className="empty">
                       {productos.length === 0 ? "Sin productos todavía. Agrega el primero arriba." : "Nada que coincida con el filtro."}
                     </td>
                   </tr>

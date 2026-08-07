@@ -16,6 +16,7 @@ export type Producto = {
   stock_minimo: number;
   unidades_por_paquete: number;
   activo: number; // 0/1
+  disponible_delivery: number; // 0/1 — si se ofrece o no en la app de delivery
 };
 
 export type ProductoInventario = Producto & {
@@ -41,6 +42,7 @@ export type ConfigRow = {
   proximo_numero_ticket: number;
   vendedor_actual_id: string | null;
   gemini_api_key: string | null;
+  delivery_api_url: string | null;
 };
 
 export type Vendedor = {
@@ -220,6 +222,7 @@ export type FacturaVentaResumen = {
   vendedor_nombre: string | null;
   total_bs: number;
   estado: string;
+  canal: string; // TIENDA / DELIVERY
 };
 
 export type FacturaVentaCompleta = {

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getDb } from "../db";
-import { precioVentaBsHoy, precioVentaUsd } from "../precios";
+import { formatearStock, precioVentaBsHoy, precioVentaUsd } from "../precios";
 import { fechaHoraVenezuela } from "../fecha";
 import { normalizarTexto, sqlSinAcentos } from "../busqueda";
 import {
@@ -1082,6 +1082,7 @@ export default function Venta({
               <th>Cant.</th>
               <th>Precio Bs</th>
               <th>Precio USD</th>
+              <th>Subtotal USD</th>
               <th>Subtotal Bs</th>
             </tr>
           </thead>
@@ -1092,6 +1093,7 @@ export default function Venta({
                 <td>{l.cantidad}</td>
                 <td>{l.precio_unit_bs.toFixed(2)}</td>
                 <td>{(l.precio_unit_bs / recibo.tasa).toFixed(2)}</td>
+                <td>{((l.precio_unit_bs * l.cantidad) / recibo.tasa).toFixed(2)}</td>
                 <td>{(l.precio_unit_bs * l.cantidad).toFixed(2)}</td>
               </tr>
             ))}
@@ -1251,6 +1253,7 @@ export default function Venta({
                 <th>Cant.</th>
                 <th>Precio Bs</th>
                 <th>Precio USD</th>
+                <th>Subtotal USD</th>
                 <th>Subtotal Bs</th>
                 <th></th>
               </tr>
@@ -1269,6 +1272,7 @@ export default function Venta({
                   </td>
                   <td>{l.precio_unit_bs.toFixed(2)}</td>
                   <td>{(l.precio_unit_bs / config.tasa_cambio_dia).toFixed(2)}</td>
+                  <td>{((l.precio_unit_bs * l.cantidad) / config.tasa_cambio_dia).toFixed(2)}</td>
                   <td>{(l.precio_unit_bs * l.cantidad).toFixed(2)}</td>
                   <td>
                     <button className="link-btn link-btn-danger" onClick={() => quitarLinea(l.producto_id)}>
@@ -1279,7 +1283,7 @@ export default function Venta({
               ))}
               {activo.carrito.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="empty">
+                  <td colSpan={7} className="empty">
                     Carrito vacío. Escanea el primer producto.
                   </td>
                 </tr>
@@ -1629,7 +1633,7 @@ export default function Venta({
                     >
                       <span>{p.nombre}</span>
                       <span style={{ color: "#5f5e5a" }}>
-                        {p.codigo_barra} · stock {p.stock_actual}
+                        {p.codigo_barra} · stock {formatearStock(p.stock_actual)}
                       </span>
                     </li>
                   ))}

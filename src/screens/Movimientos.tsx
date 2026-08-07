@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getDb } from "../db";
 import { ConfigRow, MovimientoInventario, ProductoInventario } from "../types";
-import { gananciaUnitariaUsd, precioVentaBsHoy, precioVentaUsd } from "../precios";
+import { formatearStock, gananciaUnitariaUsd, precioVentaBsHoy, precioVentaUsd } from "../precios";
 import { fechaHoraVenezuela } from "../fecha";
 import { normalizarTexto, sqlSinAcentos } from "../busqueda";
 
@@ -312,7 +312,7 @@ export default function Movimientos({ config }: { config: ConfigRow }) {
                   }}
                 >
                   <span>{p.nombre}</span>
-                  <span style={{ color: "#5f5e5a" }}>{p.codigo_barra} · stock {p.stock_actual}</span>
+                  <span style={{ color: "#5f5e5a" }}>{p.codigo_barra} · stock {formatearStock(p.stock_actual)}</span>
                 </li>
               ))}
             </ul>
@@ -354,11 +354,11 @@ export default function Movimientos({ config }: { config: ConfigRow }) {
               </div>
               <div className="card stat-card">
                 <h2>Stock actual</h2>
-                <p className="ticket-total">{productoSeleccionado.stock_actual}</p>
+                <p className="ticket-total">{formatearStock(productoSeleccionado.stock_actual)}</p>
               </div>
               <div className="card stat-card">
                 <h2>Stock al iniciar hoy</h2>
-                <p className="ticket-total">{stockInicioHoy ?? "—"}</p>
+                <p className="ticket-total">{stockInicioHoy != null ? formatearStock(stockInicioHoy) : "—"}</p>
                 {totalesHoy && (
                   <p className="hint">
                     hoy: +{totalesHoy.entradas} / -{totalesHoy.salidas}
@@ -476,7 +476,7 @@ export default function Movimientos({ config }: { config: ConfigRow }) {
                       }}
                     >
                       <span>{p.nombre}</span>
-                      <span style={{ color: "#5f5e5a" }}>{p.codigo_barra} · stock {p.stock_actual}</span>
+                      <span style={{ color: "#5f5e5a" }}>{p.codigo_barra} · stock {formatearStock(p.stock_actual)}</span>
                     </li>
                   ))}
                 </ul>

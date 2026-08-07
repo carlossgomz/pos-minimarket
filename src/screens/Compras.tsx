@@ -1,6 +1,7 @@
 import { Fragment, ReactNode, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getDb } from "../db";
+import { formatearStock } from "../precios";
 import {
   ConfigRow,
   FacturaCompraItemDetalle,
@@ -928,7 +929,7 @@ export default function Compras({
             <div className="aviso-producto aviso-producto-existente">
               <span>
                 ✓ Producto existente: <strong>{productoSeleccionado.nombre}</strong> (stock
-                actual: {productoSeleccionado.stock_actual})
+                actual: {formatearStock(productoSeleccionado.stock_actual)})
               </span>
               <button className="link-btn" onClick={tratarComoNuevo}>
                 no es este, crear nuevo

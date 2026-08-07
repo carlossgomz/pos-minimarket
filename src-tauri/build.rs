@@ -20,6 +20,12 @@ fn main() {
                 "registrar_pago_proveedor",
                 "registrar_consumo_interno",
                 "guardar_factura_compra",
+                "editar_factura_compra",
+                "eliminar_factura_compra",
+                "desglosar_producto",
+                "db_select_cache",
+                "sincronizar_catalogo_delivery",
+                "obtener_pedidos_delivery_pendientes",
             ]),
         ),
     )

@@ -191,35 +191,50 @@ pub async fn ejecutar_desde_cola(
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ItemVentaInput {
-    producto_id: String,
-    cantidad: f64,
-    precio_unit_bs: f64,
+    pub producto_id: String,
+    pub cantidad: f64,
+    pub precio_unit_bs: f64,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct PagoVentaInput {
-    metodo: String,
-    monto_bs: f64,
-    referencia: Option<String>,
+    pub metodo: String,
+    pub monto_bs: f64,
+    pub referencia: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ConfirmarVentaInput {
-    id: String,
-    fecha_hora: String,
-    cliente_nombre: Option<String>,
-    cliente_cedula: Option<String>,
-    cliente_direccion: Option<String>,
-    vendedor_id: Option<String>,
-    vendedor_nombre: Option<String>,
-    tasa_cambio_dia: f64,
-    subtotal_bs: f64,
-    iva_bs: f64,
-    total_bs: f64,
-    estado: String,
-    monto_pendiente_usd: Option<f64>,
-    items: Vec<ItemVentaInput>,
-    pagos: Vec<PagoVentaInput>,
+    pub id: String,
+    pub fecha_hora: String,
+    pub cliente_nombre: Option<String>,
+    pub cliente_cedula: Option<String>,
+    pub cliente_direccion: Option<String>,
+    pub vendedor_id: Option<String>,
+    pub vendedor_nombre: Option<String>,
+    pub tasa_cambio_dia: f64,
+    pub subtotal_bs: f64,
+    pub iva_bs: f64,
+    pub total_bs: f64,
+    pub estado: String,
+    pub monto_pendiente_usd: Option<f64>,
+    /// "TIENDA" (default, caja física) o "DELIVERY" (venta importada de un
+    /// pedido entregado de la app de delivery — ver delivery.rs). El
+    /// frontend de Venta.tsx no manda este campo (serde lo completa con el
+    /// default de abajo), solo lo usa la importación automática.
+    #[serde(default = "canal_tienda")]
+    pub canal: String,
+    /// Id del Order de la delivery-app cuando canal = "DELIVERY", para
+    /// trazabilidad — no se usa para nada más (la dedupe real pasa por
+    /// Order.importadoPos del lado de la delivery-app).
+    #[serde(default)]
+    pub pedido_delivery_id: Option<String>,
+    pub items: Vec<ItemVentaInput>,
+    pub pagos: Vec<PagoVentaInput>,
+}
+
+pub fn canal_tienda() -> String {
+    "TIENDA".to_string()
 }
 
 #[derive(Debug, Serialize)]
@@ -239,7 +254,7 @@ pub struct ConfirmarVentaOutput {
 /// igual contra la conexión remota o contra la caché local — la usan
 /// tanto el comando público como el reintento offline (ver
 /// ejecutar_desde_cola).
-async fn confirmar_venta_interna(
+pub(crate) async fn confirmar_venta_interna(
     conn: &libsql::Connection,
     input: &ConfirmarVentaInput,
 ) -> Result<ConfirmarVentaOutput, String> {
@@ -277,8 +292,8 @@ async fn confirmar_venta_interna(
     let numero_ticket = format!("{prefijo}-{numero:06}");
 
     tx.execute(
-        "INSERT INTO ventas (id, numero_ticket, fecha_hora, cliente_nombre, cliente_cedula, cliente_direccion, vendedor_id, vendedor_nombre, tasa_cambio_dia, subtotal_bs, iva_bs, total_bs, estado, monto_pendiente_usd)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
+        "INSERT INTO ventas (id, numero_ticket, fecha_hora, cliente_nombre, cliente_cedula, cliente_direccion, vendedor_id, vendedor_nombre, tasa_cambio_dia, subtotal_bs, iva_bs, total_bs, estado, monto_pendiente_usd, canal, pedido_delivery_id)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
         libsql::params![
             input.id.clone(),
             numero_ticket.clone(),
@@ -294,6 +309,8 @@ async fn confirmar_venta_interna(
             input.total_bs,
             input.estado.clone(),
             input.monto_pendiente_usd,
+            input.canal.clone(),
+            input.pedido_delivery_id.clone(),
         ],
     )
     .await

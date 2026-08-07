@@ -1,15 +1,31 @@
 import { useEffect, useState } from "react";
 import { getDb } from "../db";
-import { Rol, Usuario } from "../types";
+import { Rol, Usuario, Vendedor } from "../types";
 import { hashPassword } from "../auth";
 
-export default function Usuarios() {
+export default function Usuarios({ usuarioActual }: { usuarioActual: Usuario }) {
   const [usuarios, setUsuarios] = useState<Usuario[]>([]);
   const [nombre, setNombre] = useState("");
   const [usuario, setUsuario] = useState("");
   const [password, setPassword] = useState("");
   const [rol, setRol] = useState<Rol>("CAJERO");
   const [mensaje, setMensaje] = useState<string | null>(null);
+
+  const [vendedores, setVendedores] = useState<Vendedor[]>([]);
+  const [nombreVendedor, setNombreVendedor] = useState("");
+
+  const [deliveryApiUrl, setDeliveryApiUrl] = useState("");
+  const [deliverySyncToken, setDeliverySyncToken] = useState("");
+  const [mensajeDelivery, setMensajeDelivery] = useState<string | null>(null);
+
+  async function cargarConfigDelivery() {
+    const db = await getDb();
+    const rows = await db.select<{ delivery_api_url: string | null; delivery_sync_token: string | null }[]>(
+      "SELECT delivery_api_url, delivery_sync_token FROM config WHERE id = 1"
+    );
+    setDeliveryApiUrl(rows[0]?.delivery_api_url ?? "");
+    setDeliverySyncToken(rows[0]?.delivery_sync_token ?? "");
+  }
 
   async function cargar() {
     const db = await getDb();
@@ -19,9 +35,28 @@ export default function Usuarios() {
     setUsuarios(rows);
   }
 
+  async function cargarVendedores() {
+    const db = await getDb();
+    const rows = await db.select<Vendedor[]>("SELECT id, nombre, activo FROM vendedores ORDER BY nombre");
+    setVendedores(rows);
+  }
+
   useEffect(() => {
     cargar();
+    cargarVendedores();
+    cargarConfigDelivery();
   }, []);
+
+  async function guardarConfigDelivery(e: React.FormEvent) {
+    e.preventDefault();
+    setMensajeDelivery(null);
+    const db = await getDb();
+    await db.execute("UPDATE config SET delivery_api_url = $1, delivery_sync_token = $2 WHERE id = 1", [
+      deliveryApiUrl.trim() || null,
+      deliverySyncToken.trim() || null,
+    ]);
+    setMensajeDelivery("Guardado.");
+  }
 
   async function crearUsuario(e: React.FormEvent) {
     e.preventDefault();
@@ -75,6 +110,43 @@ export default function Usuarios() {
     const hash = await hashPassword(nueva);
     await db.execute("UPDATE usuarios SET password_hash = $1 WHERE id = $2", [hash, u.id]);
     alert("Contraseña actualizada.");
+  }
+
+  async function eliminarUsuario(u: Usuario) {
+    setMensaje(null);
+    if (u.id === usuarioActual.id) {
+      setMensaje("No puedes eliminar tu propio usuario mientras tienes la sesión abierta.");
+      return;
+    }
+    if (u.rol === "ADMIN" && usuarios.filter((x) => x.rol === "ADMIN" && x.activo).length <= 1) {
+      setMensaje("No puedes eliminar el único administrador activo.");
+      return;
+    }
+    if (!window.confirm(`¿Eliminar el usuario "${u.nombre}" (${u.usuario})? No se puede deshacer.`)) return;
+    const db = await getDb();
+    await db.execute("DELETE FROM usuarios WHERE id = $1", [u.id]);
+    await cargar();
+  }
+
+  async function crearVendedor(e: React.FormEvent) {
+    e.preventDefault();
+    if (!nombreVendedor.trim()) return;
+    const db = await getDb();
+    await db.execute("INSERT INTO vendedores (id, nombre) VALUES ($1,$2)", [
+      crypto.randomUUID(),
+      nombreVendedor.trim(),
+    ]);
+    setNombreVendedor("");
+    await cargarVendedores();
+  }
+
+  async function toggleActivoVendedor(v: Vendedor) {
+    if (v.activo && !window.confirm(`¿Eliminar al vendedor "${v.nombre}"? Deja de aparecer para elegir en Venta, pero las ventas ya hechas conservan su nombre.`)) {
+      return;
+    }
+    const db = await getDb();
+    await db.execute("UPDATE vendedores SET activo = $1 WHERE id = $2", [v.activo ? 0 : 1, v.id]);
+    await cargarVendedores();
   }
 
   return (
@@ -140,6 +212,9 @@ export default function Usuarios() {
                   </button>{" "}
                   <button className="link-btn" onClick={() => resetearPassword(u)}>
                     cambiar contraseña
+                  </button>{" "}
+                  <button className="link-btn link-btn-danger" onClick={() => eliminarUsuario(u)}>
+                    eliminar
                   </button>
                 </td>
               </tr>
@@ -153,6 +228,86 @@ export default function Usuarios() {
             )}
           </tbody>
         </table>
+      </section>
+
+      <section className="card">
+        <h2>Vendedores</h2>
+        <p className="hint">
+          Son los nombres que aparecen para elegir "Vendedor" arriba en Venta — no tienen usuario
+          ni contraseña propia, solo sirven para atribuir cada venta a quien atendió.
+        </p>
+        <form className="form-row" onSubmit={crearVendedor}>
+          <input
+            placeholder="Nombre del vendedor"
+            value={nombreVendedor}
+            onChange={(e) => setNombreVendedor(e.target.value)}
+          />
+          <button type="submit">Agregar</button>
+        </form>
+        <table>
+          <thead>
+            <tr>
+              <th>Nombre</th>
+              <th>Estado</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {vendedores.map((v) => (
+              <tr key={v.id}>
+                <td>{v.nombre}</td>
+                <td>
+                  <span className={`badge ${v.activo ? "badge-ok" : "badge-agotado"}`}>
+                    {v.activo ? "Activo" : "Inactivo"}
+                  </span>
+                </td>
+                <td>
+                  <button
+                    className={`link-btn ${v.activo ? "link-btn-danger" : ""}`}
+                    onClick={() => toggleActivoVendedor(v)}
+                  >
+                    {v.activo ? "eliminar" : "reactivar"}
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {vendedores.length === 0 && (
+              <tr>
+                <td colSpan={3} className="empty">
+                  Sin vendedores.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </section>
+
+      <section className="card">
+        <h2>App de delivery</h2>
+        <p className="hint">
+          Conecta este POS con la app de delivery (Next.js aparte) — con esto configurado, el
+          catálogo se sincroniza solo cada pocos minutos, aparece el aviso de pedidos pendientes
+          en el encabezado, y los pedidos entregados se registran solos como venta acá, con
+          etiqueta "Delivery". La URL y el token deben coincidir con la variable{" "}
+          <code>POS_SYNC_TOKEN</code> configurada del lado de la delivery-app.
+        </p>
+        <form className="form-row" onSubmit={guardarConfigDelivery}>
+          <input
+            placeholder="https://tu-delivery-app.vercel.app"
+            value={deliveryApiUrl}
+            onChange={(e) => setDeliveryApiUrl(e.target.value)}
+            style={{ flex: 2 }}
+          />
+          <input
+            placeholder="Token compartido (POS_SYNC_TOKEN)"
+            type="password"
+            value={deliverySyncToken}
+            onChange={(e) => setDeliverySyncToken(e.target.value)}
+            style={{ flex: 2 }}
+          />
+          <button type="submit">Guardar</button>
+        </form>
+        {mensajeDelivery && <p className="hint">{mensajeDelivery}</p>}
       </section>
     </div>
   );

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-sincronizar-catalogo-delivery"
+description = "Enables the sincronizar_catalogo_delivery command without any pre-configured scope."
+commands.allow = ["sincronizar_catalogo_delivery"]
+
+[[permission]]
+identifier = "deny-sincronizar-catalogo-delivery"
+description = "Denies the sincronizar_catalogo_delivery command without any pre-configured scope."
+commands.deny = ["sincronizar_catalogo_delivery"]

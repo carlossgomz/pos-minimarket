@@ -53,6 +53,7 @@ export default function Reportes({ config }: { config: ConfigRow }) {
   const [desde, setDesde] = useState(primerDiaMes());
   const [hasta, setHasta] = useState(hoy());
   const [filas, setFilas] = useState<FilaReporte[]>([]);
+  const [porCanal, setPorCanal] = useState<{ canal: string; total_bs: number; num_ventas: number }[]>([]);
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -93,6 +94,15 @@ export default function Reportes({ config }: { config: ConfigRow }) {
       }));
 
       setFilas(combinado);
+
+      const canales = await db.select<{ canal: string; total_bs: number; num_ventas: number }[]>(
+        `SELECT canal, SUM(total_bs) as total_bs, COUNT(*) as num_ventas
+         FROM ventas
+         WHERE date(fecha_hora) BETWEEN $1 AND $2
+         GROUP BY canal`,
+        [desde, hasta]
+      );
+      setPorCanal(canales);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -114,6 +124,11 @@ export default function Reportes({ config }: { config: ConfigRow }) {
   }, [filas]);
 
   const maxValor = Math.max(1, ...filas.map((f) => Math.max(f.total_bs, f.ganancia_bs)));
+
+  const totalTienda = porCanal.find((c) => c.canal === "TIENDA")?.total_bs ?? 0;
+  const totalDelivery = porCanal.find((c) => c.canal === "DELIVERY")?.total_bs ?? 0;
+  const numTienda = porCanal.find((c) => c.canal === "TIENDA")?.num_ventas ?? 0;
+  const numDelivery = porCanal.find((c) => c.canal === "DELIVERY")?.num_ventas ?? 0;
 
   function aplicarAtajo(tipo: "hoy" | "semana" | "mes" | "mesPasado" | "todo") {
     if (tipo === "hoy") {
@@ -193,6 +208,20 @@ export default function Reportes({ config }: { config: ConfigRow }) {
         Conversión a USD con la tasa del día de hoy ({config.tasa_cambio_dia.toFixed(2)} Bs/$) — no la tasa de
         cada venta individual.
       </p>
+
+      {(numTienda > 0 || numDelivery > 0) && (
+        <div className="card">
+          <h2>Tienda vs. Delivery</h2>
+          <div className="form-row">
+            <div>
+              <strong>Tienda:</strong> Bs {totalTienda.toFixed(2)} ({numTienda} venta{numTienda === 1 ? "" : "s"})
+            </div>
+            <div>
+              <strong>Delivery:</strong> Bs {totalDelivery.toFixed(2)} ({numDelivery} venta{numDelivery === 1 ? "" : "s"})
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="card">
         <h2>Ventas y ganancia por día</h2>

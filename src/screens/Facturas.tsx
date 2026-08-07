@@ -37,7 +37,7 @@ export default function Facturas({ config }: { config: ConfigRow }) {
     const term = termCrudo ? `%${termCrudo}%` : "%";
     const termSinAcentos = termCrudo ? `%${normalizarTexto(termCrudo)}%` : "%";
     const rows = await db.select<FacturaVentaResumen[]>(
-      `SELECT id, numero_ticket, fecha_hora, cliente_nombre, cliente_cedula, vendedor_nombre, total_bs, estado
+      `SELECT id, numero_ticket, fecha_hora, cliente_nombre, cliente_cedula, vendedor_nombre, total_bs, estado, canal
        FROM ventas
        WHERE date(fecha_hora) BETWEEN $1 AND $2
          AND (numero_ticket LIKE $3 OR ${sqlSinAcentos("cliente_nombre")} LIKE $4 OR cliente_cedula LIKE $3)
@@ -134,7 +134,14 @@ export default function Facturas({ config }: { config: ConfigRow }) {
           <tbody>
             {facturas.map((f) => (
               <tr key={f.id}>
-                <td>{f.numero_ticket}</td>
+                <td>
+                  {f.numero_ticket}
+                  {f.canal === "DELIVERY" && (
+                    <span className="badge badge-ok" style={{ marginLeft: 6 }}>
+                      Delivery
+                    </span>
+                  )}
+                </td>
                 <td>{formatearFechaHora(f.fecha_hora)}</td>
                 <td>{f.cliente_nombre ?? "Consumidor final"}</td>
                 <td>{f.vendedor_nombre ?? "—"}</td>

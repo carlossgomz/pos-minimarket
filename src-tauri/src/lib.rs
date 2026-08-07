@@ -1,5 +1,6 @@
 mod comandos;
 mod db;
+mod delivery;
 mod ia;
 mod offline;
 
@@ -49,8 +50,10 @@ pub fn run() {
 
             app.manage(estado);
             app.manage(cache);
+            app.manage(delivery::EstadoPedidosDelivery::default());
 
-            offline::arrancar_tarea_sincronizacion(handle);
+            offline::arrancar_tarea_sincronizacion(handle.clone());
+            delivery::arrancar_tareas(handle);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -70,7 +73,9 @@ pub fn run() {
             comandos::guardar_factura_compra,
             comandos::editar_factura_compra,
             comandos::eliminar_factura_compra,
-            comandos::desglosar_producto
+            comandos::desglosar_producto,
+            delivery::sincronizar_catalogo_delivery,
+            delivery::obtener_pedidos_delivery_pendientes
         ])
         .run(tauri::generate_context!())
         .expect("error al iniciar la aplicación");

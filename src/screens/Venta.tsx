@@ -80,9 +80,24 @@ function ticketVacio(): TicketAbierto {
 
 // Este negocio no factura IVA por separado — el precio de venta ya es el
 // precio final, así que el total de la venta es directo el subtotal.
-function calcularTotales(carrito: LineaCarrito[]) {
-  const subtotal = carrito.reduce((acc, l) => acc + l.precio_unit_bs * l.cantidad, 0);
-  return { subtotal, total: subtotal };
+//
+// El total en Bs se arma a partir del total en USD YA REDONDEADO a
+// centavos, no sumando los Bs de cada línea por separado: cada línea
+// individual ya es consistente (ver precioVentaBsHoy en precios.ts), pero
+// sumar varias líneas y mostrar "USD total" como esa suma de Bs dividida
+// entre la tasa (y recién ahí redondeada) da un USD que, multiplicado a
+// mano por la tasa, no reconstruye el Bs que se ve en pantalla — mismo
+// problema que con el precio por producto, ahora a nivel de todo el
+// carrito. Redondeando el USD total UNA sola vez y calculando el Bs desde
+// ahí, lo que se ve siempre cuadra con una calculadora.
+function calcularTotales(carrito: LineaCarrito[], tasa: number) {
+  const totalUsdSinRedondear = carrito.reduce(
+    (acc, l) => acc + (tasa > 0 ? (l.precio_unit_bs / tasa) * l.cantidad : 0),
+    0
+  );
+  const totalUsd = Math.round(totalUsdSinRedondear * 100) / 100;
+  const total = totalUsd * tasa;
+  return { subtotal: total, total, totalUsd };
 }
 
 // Reparte una lista de pagos entre "lo que cubre un monto objetivo" (ej. la
@@ -246,7 +261,7 @@ export default function Venta({
     if (visible) inputRef.current?.focus();
   }, [visible]);
 
-  const { subtotal, total } = calcularTotales(activo.carrito);
+  const { subtotal, total } = calcularTotales(activo.carrito, config.tasa_cambio_dia);
   // Si el cajero eligió combinar la deuda vieja, el total "a cobrar" de
   // este ticket la incluye (convertida a la tasa de HOY, igual criterio
   // que el resto de la app) — pero el total real de la VENTA que se
@@ -1119,7 +1134,7 @@ export default function Venta({
     <div>
       <div className="ticket-tabs">
         {tickets.map((t, i) => {
-          const { total: totalT } = calcularTotales(t.carrito);
+          const { total: totalT } = calcularTotales(t.carrito, config.tasa_cambio_dia);
           return (
             <div key={t.id} className={`ticket-tab ${t.id === activeId ? "ticket-tab-activo" : ""}`}>
               <button className="ticket-tab-btn" onClick={() => cambiarDeTicket(t.id)}>

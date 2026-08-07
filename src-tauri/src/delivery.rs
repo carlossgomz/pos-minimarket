@@ -180,8 +180,10 @@ struct PedidosPendientesRespuesta {
 struct ItemPedidoEntregado {
     codigo: String,
     cantidad: f64,
-    #[serde(rename = "precioUsd")]
-    precio_usd: f64,
+    // Ya incluye el recargo de delivery ($0.10/producto) — ver el
+    // comentario en importar_pedido_como_venta.
+    #[serde(rename = "totalBsLinea")]
+    total_bs_linea: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -276,8 +278,14 @@ async fn importar_pedido_como_venta(
         };
         let producto_id: String = fila.get(0).map_err(|e| e.to_string())?;
 
-        let precio_unit_bs = item.precio_usd * pedido.tasa_cambio;
-        subtotal_bs += precio_unit_bs * item.cantidad;
+        // total_bs_linea ya trae el recargo de delivery incluido (lo
+        // calcula la delivery-app con la misma fórmula que usa para
+        // cobrarle al cliente) — se reparte entre la cantidad solo para
+        // tener un precio unitario que guardar en venta_items; lo que
+        // importa para el cuadre de caja es que la suma de las líneas
+        // (subtotal_bs) coincida con lo que realmente se cobró.
+        let precio_unit_bs = if item.cantidad > 0.0 { item.total_bs_linea / item.cantidad } else { 0.0 };
+        subtotal_bs += item.total_bs_linea;
         items.push(ItemVentaInput { producto_id, cantidad: item.cantidad, precio_unit_bs });
     }
 

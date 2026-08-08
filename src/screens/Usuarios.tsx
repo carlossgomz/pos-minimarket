@@ -16,15 +16,17 @@ export default function Usuarios({ usuarioActual }: { usuarioActual: Usuario }) 
 
   const [deliveryApiUrl, setDeliveryApiUrl] = useState("");
   const [deliverySyncToken, setDeliverySyncToken] = useState("");
+  const [deliverySyncAutomatico, setDeliverySyncAutomatico] = useState(true);
   const [mensajeDelivery, setMensajeDelivery] = useState<string | null>(null);
 
   async function cargarConfigDelivery() {
     const db = await getDb();
-    const rows = await db.select<{ delivery_api_url: string | null; delivery_sync_token: string | null }[]>(
-      "SELECT delivery_api_url, delivery_sync_token FROM config WHERE id = 1"
-    );
+    const rows = await db.select<
+      { delivery_api_url: string | null; delivery_sync_token: string | null; delivery_sync_automatico: number }[]
+    >("SELECT delivery_api_url, delivery_sync_token, delivery_sync_automatico FROM config WHERE id = 1");
     setDeliveryApiUrl(rows[0]?.delivery_api_url ?? "");
     setDeliverySyncToken(rows[0]?.delivery_sync_token ?? "");
+    setDeliverySyncAutomatico((rows[0]?.delivery_sync_automatico ?? 1) !== 0);
   }
 
   async function cargar() {
@@ -51,10 +53,10 @@ export default function Usuarios({ usuarioActual }: { usuarioActual: Usuario }) 
     e.preventDefault();
     setMensajeDelivery(null);
     const db = await getDb();
-    await db.execute("UPDATE config SET delivery_api_url = $1, delivery_sync_token = $2 WHERE id = 1", [
-      deliveryApiUrl.trim() || null,
-      deliverySyncToken.trim() || null,
-    ]);
+    await db.execute(
+      "UPDATE config SET delivery_api_url = $1, delivery_sync_token = $2, delivery_sync_automatico = $3 WHERE id = 1",
+      [deliveryApiUrl.trim() || null, deliverySyncToken.trim() || null, deliverySyncAutomatico ? 1 : 0]
+    );
     setMensajeDelivery("Guardado.");
   }
 
@@ -307,6 +309,19 @@ export default function Usuarios({ usuarioActual }: { usuarioActual: Usuario }) 
           />
           <button type="submit">Guardar</button>
         </form>
+        <label className="form-row" style={{ alignItems: "center", marginTop: 8 }}>
+          <input
+            type="checkbox"
+            checked={deliverySyncAutomatico}
+            onChange={(e) => setDeliverySyncAutomatico(e.target.checked)}
+          />
+          Sincronizar precios/stock con delivery automáticamente cada 5 min
+        </label>
+        <p className="hint" style={{ marginTop: 4 }}>
+          Si lo desmarcas, el catálogo solo se actualiza en la delivery-app cuando toques
+          "Sincronizar con delivery ahora" en Inventario — útil mientras estás ajustando precios a
+          mano y no quieres que se empujen todavía. Recuerda guardar.
+        </p>
         {mensajeDelivery && <p className="hint">{mensajeDelivery}</p>}
       </section>
     </div>

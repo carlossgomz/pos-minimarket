@@ -46,20 +46,29 @@ pub async fn obtener_pedidos_delivery_pendientes(
 struct ConfigDelivery {
     api_url: String,
     token: String,
+    sync_automatico: bool,
 }
 
 async fn leer_config_delivery(conn: &libsql::Connection) -> Option<ConfigDelivery> {
     let mut filas = conn
-        .query("SELECT delivery_api_url, delivery_sync_token FROM config WHERE id = 1", ())
+        .query(
+            "SELECT delivery_api_url, delivery_sync_token, delivery_sync_automatico FROM config WHERE id = 1",
+            (),
+        )
         .await
         .ok()?;
     let fila = filas.next().await.ok()??;
     let api_url: Option<String> = fila.get(0).ok()?;
     let token: Option<String> = fila.get(1).ok()?;
+    let sync_automatico: i64 = fila.get(2).ok()?;
     let api_url = api_url.filter(|s| !s.trim().is_empty())?;
     let token = token.filter(|s| !s.trim().is_empty())?;
     // Sin barra final, para poder concatenar "{api_url}/api/pos/..." sin dobles barras.
-    Some(ConfigDelivery { api_url: api_url.trim_end_matches('/').to_string(), token })
+    Some(ConfigDelivery {
+        api_url: api_url.trim_end_matches('/').to_string(),
+        token,
+        sync_automatico: sync_automatico != 0,
+    })
 }
 
 /// Mismo cálculo que precioVentaUsd en src/precios.ts — margen bruto sobre
@@ -345,6 +354,13 @@ pub fn arrancar_tareas(app: tauri::AppHandle) {
             let estado = app_catalogo.state::<EstadoBaseDatos>();
             let Ok(conn) = db::obtener_conexion(&estado).await else { continue };
             let Some(cfg) = leer_config_delivery(&conn).await else { continue };
+            // "Sincronizar con delivery ahora" (comando manual) siempre
+            // funciona; esto solo apaga el empuje automático cada 5 min,
+            // para cuando el dueño está ajustando precios/stock a mano y no
+            // quiere que la delivery-app los reciba todavía.
+            if !cfg.sync_automatico {
+                continue;
+            }
             if let Err(e) = sincronizar_catalogo(&conn, &cfg).await {
                 eprintln!("Delivery: error sincronizando catálogo: {e}");
             }

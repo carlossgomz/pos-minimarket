@@ -6,14 +6,16 @@ import {
   ConfigRow,
   FacturaPendiente,
   FacturaVentaItemDetalle,
+  FacturaVentaItemEditable,
   FacturaVentaPagoDetalle,
   ProveedorDeudor,
   VentaCredito,
 } from "../types";
+import EditorItemsVenta from "./EditorItemsVenta";
 
 const EPS = 0.01;
 
-function CuentasPorCobrar({ config }: { config: ConfigRow }) {
+function CuentasPorCobrar({ config, esAdmin }: { config: ConfigRow; esAdmin: boolean }) {
   const [clientes, setClientes] = useState<ClienteDeudor[]>([]);
   const [cedulaAbierta, setCedulaAbierta] = useState<string | null>(null);
   const [ventas, setVentas] = useState<VentaCredito[]>([]);
@@ -30,29 +32,44 @@ function CuentasPorCobrar({ config }: { config: ConfigRow }) {
 
   const [ventaDetalleAbierta, setVentaDetalleAbierta] = useState<string | null>(null);
   const [itemsDetalle, setItemsDetalle] = useState<FacturaVentaItemDetalle[]>([]);
+  const [itemsEditables, setItemsEditables] = useState<FacturaVentaItemEditable[]>([]);
   const [pagosDetalle, setPagosDetalle] = useState<FacturaVentaPagoDetalle[]>([]);
+  const [ventaEditando, setVentaEditando] = useState<VentaCredito | null>(null);
 
-  async function toggleDetalle(v: VentaCredito) {
-    if (ventaDetalleAbierta === v.id) {
-      setVentaDetalleAbierta(null);
-      setItemsDetalle([]);
-      setPagosDetalle([]);
-      return;
-    }
-    setVentaDetalleAbierta(v.id);
+  async function cargarDetalle(ventaId: string) {
     const db = await getDb();
     const items = await db.select<FacturaVentaItemDetalle[]>(
       `SELECT p.nombre as producto_nombre, vi.cantidad, vi.precio_unit_bs, vi.subtotal_bs
        FROM venta_items vi JOIN productos p ON p.id = vi.producto_id
        WHERE vi.venta_id = $1`,
-      [v.id]
+      [ventaId]
     );
     setItemsDetalle(items);
+    const itemsEd = await db.select<FacturaVentaItemEditable[]>(
+      `SELECT vi.producto_id, p.nombre as producto_nombre, vi.cantidad, vi.precio_unit_bs
+       FROM venta_items vi JOIN productos p ON p.id = vi.producto_id
+       WHERE vi.venta_id = $1`,
+      [ventaId]
+    );
+    setItemsEditables(itemsEd);
     const pagos = await db.select<FacturaVentaPagoDetalle[]>(
-      "SELECT metodo, monto_bs, referencia FROM pagos WHERE venta_id = $1",
-      [v.id]
+      "SELECT id, metodo, monto_bs, referencia, verificado_admin FROM pagos WHERE venta_id = $1",
+      [ventaId]
     );
     setPagosDetalle(pagos);
+  }
+
+  async function toggleDetalle(v: VentaCredito) {
+    setVentaEditando(null);
+    if (ventaDetalleAbierta === v.id) {
+      setVentaDetalleAbierta(null);
+      setItemsDetalle([]);
+      setItemsEditables([]);
+      setPagosDetalle([]);
+      return;
+    }
+    setVentaDetalleAbierta(v.id);
+    await cargarDetalle(v.id);
   }
 
   async function cargarClientes() {
@@ -76,7 +93,9 @@ function CuentasPorCobrar({ config }: { config: ConfigRow }) {
   async function abrirCliente(cedula: string) {
     setVentaDetalleAbierta(null);
     setItemsDetalle([]);
+    setItemsEditables([]);
     setPagosDetalle([]);
+    setVentaEditando(null);
     if (cedulaAbierta === cedula) {
       setCedulaAbierta(null);
       setVentas([]);
@@ -88,6 +107,16 @@ function CuentasPorCobrar({ config }: { config: ConfigRow }) {
       `SELECT id, numero_ticket, fecha_hora, total_bs, monto_pendiente_usd, tasa_cambio_dia
        FROM ventas WHERE cliente_cedula = $1 AND estado = 'CREDITO_PENDIENTE'
        ORDER BY fecha_hora`,
+      [cedula]
+    );
+    setVentas(rows);
+  }
+
+  async function recargarVentasCliente(cedula: string) {
+    const db = await getDb();
+    const rows = await db.select<VentaCredito[]>(
+      `SELECT id, numero_ticket, fecha_hora, total_bs, monto_pendiente_usd, tasa_cambio_dia
+       FROM ventas WHERE cliente_cedula = $1 AND estado = 'CREDITO_PENDIENTE' ORDER BY fecha_hora`,
       [cedula]
     );
     setVentas(rows);
@@ -143,16 +172,7 @@ function CuentasPorCobrar({ config }: { config: ConfigRow }) {
     setClienteAbono(null);
     setMontoBs("");
     await cargarClientes();
-    // recargar ventas del cliente abierto
-    if (cedulaAbierta) {
-      const db2 = await getDb();
-      const rows = await db2.select<VentaCredito[]>(
-        `SELECT id, numero_ticket, fecha_hora, total_bs, monto_pendiente_usd, tasa_cambio_dia
-         FROM ventas WHERE cliente_cedula = $1 AND estado = 'CREDITO_PENDIENTE' ORDER BY fecha_hora`,
-        [cedulaAbierta]
-      );
-      setVentas(rows);
-    }
+    if (cedulaAbierta) await recargarVentasCliente(cedulaAbierta);
   }
 
   return (
@@ -258,6 +278,25 @@ function CuentasPorCobrar({ config }: { config: ConfigRow }) {
                                           .join(" · ")
                                       : "ninguno todavía"}
                                   </p>
+                                  {esAdmin && ventaEditando?.id !== v.id && (
+                                    <button type="button" className="link-btn" onClick={() => setVentaEditando(v)}>
+                                      editar productos de esta venta
+                                    </button>
+                                  )}
+                                  {esAdmin && ventaEditando?.id === v.id && (
+                                    <EditorItemsVenta
+                                      ventaId={v.id}
+                                      itemsIniciales={itemsEditables}
+                                      tasaCambioDia={v.tasa_cambio_dia}
+                                      onGuardado={async () => {
+                                        setVentaEditando(null);
+                                        await cargarDetalle(v.id);
+                                        await cargarClientes();
+                                        if (cedulaAbierta) await recargarVentasCliente(cedulaAbierta);
+                                      }}
+                                      onCancelar={() => setVentaEditando(null)}
+                                    />
+                                  )}
                                 </td>
                               </tr>
                             )}
@@ -544,7 +583,7 @@ export default function Cuentas({ config, esAdmin }: { config: ConfigRow; esAdmi
   // debe a los proveedores es información administrativa/financiera del
   // negocio, no algo que necesite ver en el mostrador.
   if (!esAdmin) {
-    return <CuentasPorCobrar config={config} />;
+    return <CuentasPorCobrar config={config} esAdmin={false} />;
   }
 
   return (
@@ -557,7 +596,7 @@ export default function Cuentas({ config, esAdmin }: { config: ConfigRow; esAdmi
           Por pagar (proveedores)
         </button>
       </div>
-      {sub === "cobrar" ? <CuentasPorCobrar config={config} /> : <CuentasPorPagar config={config} />}
+      {sub === "cobrar" ? <CuentasPorCobrar config={config} esAdmin={esAdmin} /> : <CuentasPorPagar config={config} />}
     </div>
   );
 }

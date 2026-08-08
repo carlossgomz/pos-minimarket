@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { check, Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -194,31 +194,27 @@ export default function App() {
   // aunque solo el admin pueda entrar al panel de la delivery-app a
   // resolverlo desde ahí.
   const [pedidosDeliveryPendientes, setPedidosDeliveryPendientes] = useState(0);
-  // Referencia (no estado) al último conteo conocido, para poder comparar
-  // "¿subió?" sin que la comparación misma dispare un re-render.
-  const pedidosDeliveryPendientesAnteriorRef = useRef(0);
 
-  // Beep de dos tonos con Web Audio (sin archivo de audio que empaquetar)
-  // — suena cada vez que el conteo de pedidos pendientes SUBE respecto al
-  // último valor conocido, para que se note en el momento que llega un
-  // pedido nuevo y no se pierda entre el ruido de la tienda.
+  // Alarma de tres tonos agudos con Web Audio (sin archivo de audio que
+  // empaquetar) — más urgente que un simple beep para que se note en el
+  // ruido de la tienda.
   function reproducirAlarmaPedido() {
     try {
       const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       const ctx = new Ctx();
       const ahora = ctx.currentTime;
-      [0, 0.35].forEach((offset) => {
+      [0, 0.22, 0.44].forEach((offset) => {
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
-        osc.type = "sine";
-        osc.frequency.value = 880;
+        osc.type = "square";
+        osc.frequency.value = 1046.5; // C6 — agudo, corta bien el ruido de fondo
         gain.gain.setValueAtTime(0.0001, ahora + offset);
-        gain.gain.exponentialRampToValueAtTime(0.35, ahora + offset + 0.02);
-        gain.gain.exponentialRampToValueAtTime(0.0001, ahora + offset + 0.3);
+        gain.gain.exponentialRampToValueAtTime(0.4, ahora + offset + 0.015);
+        gain.gain.exponentialRampToValueAtTime(0.0001, ahora + offset + 0.18);
         osc.connect(gain);
         gain.connect(ctx.destination);
         osc.start(ahora + offset);
-        osc.stop(ahora + offset + 0.35);
+        osc.stop(ahora + offset + 0.2);
       });
     } catch {
       // si el navegador bloquea audio (ej. sin interacción previa), no pasa nada
@@ -227,12 +223,7 @@ export default function App() {
 
   async function cargarPedidosDeliveryPendientes() {
     try {
-      const n = await invoke<number>("obtener_pedidos_delivery_pendientes");
-      if (n > pedidosDeliveryPendientesAnteriorRef.current) {
-        reproducirAlarmaPedido();
-      }
-      pedidosDeliveryPendientesAnteriorRef.current = n;
-      setPedidosDeliveryPendientes(n);
+      setPedidosDeliveryPendientes(await invoke<number>("obtener_pedidos_delivery_pendientes"));
     } catch {
       // si falla, se reintenta solo en el próximo ciclo
     }
@@ -247,6 +238,22 @@ export default function App() {
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [configSyncLista, usuarioActual]);
+
+  // Repite la alarma cada ~4s MIENTRAS haya al menos un pedido pendiente
+  // (no una sola vez) — se calla sola en cuanto el conteo vuelve a 0, que
+  // es exactamente cuando el pedido pasó de PENDIENTE_VERIFICACION a
+  // ESPERANDO_PAGO (o se descartó) del lado de la delivery-app. Depende
+  // del booleano ">0", no del número exacto, para no reiniciar el
+  // intervalo (y el beep inmediato) cada vez que cambia la cantidad
+  // mientras sigue sonando.
+  const hayPedidosPendientes = pedidosDeliveryPendientes > 0;
+  useEffect(() => {
+    if (!hayPedidosPendientes) return;
+    reproducirAlarmaPedido();
+    const id = setInterval(reproducirAlarmaPedido, 4_000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hayPedidosPendientes]);
 
   useEffect(() => {
     if (!configSyncLista) return;
@@ -491,7 +498,7 @@ export default function App() {
       {esAdmin && tabEfectivo === "usuarios" && <Usuarios usuarioActual={usuarioActual} />}
       {esAdmin && tabEfectivo === "reportes" && <Reportes config={config} />}
       {esAdmin && tabEfectivo === "estadisticas" && <Estadisticas config={config} />}
-      {tabEfectivo === "facturas" && <Facturas config={config} />}
+      {tabEfectivo === "facturas" && <Facturas config={config} esAdmin={esAdmin} />}
 
       {mostrarPendientesCodigo && (
         <PendientesCodigoBarras

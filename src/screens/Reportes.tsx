@@ -54,6 +54,8 @@ export default function Reportes({ config }: { config: ConfigRow }) {
   const [hasta, setHasta] = useState(hoy());
   const [filas, setFilas] = useState<FilaReporte[]>([]);
   const [porCanal, setPorCanal] = useState<{ canal: string; total_bs: number; num_ventas: number }[]>([]);
+  const [porMetodo, setPorMetodo] = useState<{ metodo: string; cantidad_productos: number; monto_bs: number }[]>([]);
+  const [totalProductosGlobal, setTotalProductosGlobal] = useState(0);
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -103,6 +105,35 @@ export default function Reportes({ config }: { config: ConfigRow }) {
         [desde, hasta]
       );
       setPorCanal(canales);
+
+      // Productos vendidos por método de pago: se atribuyen todos los
+      // ítems de una venta a cada método con que se pagó — en el caso
+      // normal (una venta, un método) da el número exacto; si una venta
+      // se pagó dividida entre varios métodos, sus productos se cuentan
+      // una vez por cada método presente (se avisa abajo). El total
+      // global se calcula aparte, directo de venta_items, para que ESE
+      // número sí sea exacto sin importar los pagos divididos.
+      const metodos = await db.select<{ metodo: string; cantidad_productos: number; monto_bs: number }[]>(
+        `SELECT pg.metodo,
+                SUM(vi.cantidad) as cantidad_productos,
+                SUM(vi.subtotal_bs) as monto_bs
+         FROM pagos pg
+         JOIN ventas v ON v.id = pg.venta_id
+         JOIN venta_items vi ON vi.venta_id = v.id
+         WHERE date(v.fecha_hora) BETWEEN $1 AND $2
+         GROUP BY pg.metodo
+         ORDER BY cantidad_productos DESC`,
+        [desde, hasta]
+      );
+      setPorMetodo(metodos);
+
+      const totalGlobal = await db.select<{ total: number | null }[]>(
+        `SELECT SUM(vi.cantidad) as total
+         FROM venta_items vi JOIN ventas v ON v.id = vi.venta_id
+         WHERE date(v.fecha_hora) BETWEEN $1 AND $2`,
+        [desde, hasta]
+      );
+      setTotalProductosGlobal(totalGlobal[0]?.total ?? 0);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -220,6 +251,39 @@ export default function Reportes({ config }: { config: ConfigRow }) {
               <strong>Delivery:</strong> Bs {totalDelivery.toFixed(2)} ({numDelivery} venta{numDelivery === 1 ? "" : "s"})
             </div>
           </div>
+        </div>
+      )}
+
+      {porMetodo.length > 0 && (
+        <div className="card">
+          <h2>Productos vendidos por método de pago</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Método</th>
+                <th>Cant. de productos</th>
+                <th>Monto Bs</th>
+              </tr>
+            </thead>
+            <tbody>
+              {porMetodo.map((m) => (
+                <tr key={m.metodo}>
+                  <td>{m.metodo.split("_").join(" ")}</td>
+                  <td>{m.cantidad_productos}</td>
+                  <td>{m.monto_bs.toFixed(2)}</td>
+                </tr>
+              ))}
+              <tr style={{ fontWeight: 700 }}>
+                <td>Total global</td>
+                <td>{totalProductosGlobal}</td>
+                <td>{resumen.totalVentas.toFixed(2)}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p className="hint" style={{ marginTop: 8 }}>
+            Si una venta se pagó dividida entre varios métodos, sus productos se cuentan una vez por
+            cada método usado — por eso la fila "Total global" se calcula aparte y es la exacta.
+          </p>
         </div>
       )}
 

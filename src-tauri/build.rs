@@ -14,6 +14,7 @@ fn main() {
                 "estado_conexion",
                 "escanear_factura",
                 "confirmar_venta",
+                "editar_venta_items",
                 "ajustar_stock",
                 "registrar_abono_cliente",
                 "registrar_abono_cliente_total",

@@ -248,11 +248,22 @@ export type FacturaVentaItemDetalle = {
   subtotal_bs: number;
 };
 
+// Igual que FacturaVentaItemDetalle, pero con producto_id — hace falta
+// para poder editar los productos de una venta ya registrada (ver
+// EditorItemsVenta.tsx).
+export type FacturaVentaItemEditable = {
+  producto_id: string;
+  producto_nombre: string;
+  cantidad: number;
+  precio_unit_bs: number;
+};
+
 export type FacturaVentaPagoDetalle = {
   id: string;
   metodo: string;
   monto_bs: number;
   referencia: string | null;
+  verificado_admin: number; // 0/1 — solo aplica a PAGO_MOVIL
 };
 
 export type FacturaCompraResumen = {

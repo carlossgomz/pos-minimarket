@@ -4,6 +4,7 @@ import {
   ConfigRow,
   FacturaVentaCompleta,
   FacturaVentaItemDetalle,
+  FacturaVentaItemEditable,
   FacturaVentaPagoDetalle,
   FacturaVentaResumen,
   METODOS_PAGO,
@@ -11,6 +12,7 @@ import {
 import { normalizarTexto, sqlSinAcentos } from "../busqueda";
 import { fechaHoraVenezuela } from "../fecha";
 import logo from "../assets/logo.png";
+import EditorItemsVenta from "./EditorItemsVenta";
 
 function hoyISO() {
   return fechaHoraVenezuela().slice(0, 10);
@@ -22,29 +24,38 @@ function haceNDias(n: number) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-export default function Facturas({ config }: { config: ConfigRow }) {
+export default function Facturas({ config, esAdmin }: { config: ConfigRow; esAdmin: boolean }) {
   const [desde, setDesde] = useState(haceNDias(30));
   const [hasta, setHasta] = useState(hoyISO());
   const [busqueda, setBusqueda] = useState("");
+  const [metodoFiltro, setMetodoFiltro] = useState("");
   const [facturas, setFacturas] = useState<FacturaVentaResumen[]>([]);
 
   const [seleccionada, setSeleccionada] = useState<FacturaVentaCompleta | null>(null);
   const [items, setItems] = useState<FacturaVentaItemDetalle[]>([]);
+  const [itemsEditables, setItemsEditables] = useState<FacturaVentaItemEditable[]>([]);
   const [pagos, setPagos] = useState<FacturaVentaPagoDetalle[]>([]);
+  const [editandoItems, setEditandoItems] = useState(false);
 
   async function cargarLista() {
     const db = await getDb();
     const termCrudo = busqueda.trim();
     const term = termCrudo ? `%${termCrudo}%` : "%";
     const termSinAcentos = termCrudo ? `%${normalizarTexto(termCrudo)}%` : "%";
+    const filtroMetodo = metodoFiltro
+      ? "AND id IN (SELECT venta_id FROM pagos WHERE metodo = $5)"
+      : "";
+    const params: (string | number)[] = [desde, hasta, term, termSinAcentos];
+    if (metodoFiltro) params.push(metodoFiltro);
     const rows = await db.select<FacturaVentaResumen[]>(
       `SELECT id, numero_ticket, fecha_hora, cliente_nombre, cliente_cedula, vendedor_nombre, total_bs, estado, canal
        FROM ventas
        WHERE date(fecha_hora) BETWEEN $1 AND $2
          AND (numero_ticket LIKE $3 OR ${sqlSinAcentos("cliente_nombre")} LIKE $4 OR cliente_cedula LIKE $3)
+         ${filtroMetodo}
        ORDER BY fecha_hora DESC
        LIMIT 200`,
-      [desde, hasta, term, termSinAcentos]
+      params
     );
     setFacturas(rows);
   }
@@ -54,7 +65,7 @@ export default function Facturas({ config }: { config: ConfigRow }) {
     const timer = setTimeout(cargarLista, 250);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [desde, hasta, busqueda]);
+  }, [desde, hasta, busqueda, metodoFiltro]);
 
   async function abrirFactura(id: string) {
     const db = await getDb();
@@ -65,6 +76,7 @@ export default function Facturas({ config }: { config: ConfigRow }) {
       [id]
     );
     setSeleccionada(completa[0] ?? null);
+    setEditandoItems(false);
 
     const itemRows = await db.select<FacturaVentaItemDetalle[]>(
       `SELECT p.nombre as producto_nombre, vi.cantidad, vi.precio_unit_bs, vi.subtotal_bs
@@ -74,8 +86,16 @@ export default function Facturas({ config }: { config: ConfigRow }) {
     );
     setItems(itemRows);
 
+    const itemsEditablesRows = await db.select<FacturaVentaItemEditable[]>(
+      `SELECT vi.producto_id, p.nombre as producto_nombre, vi.cantidad, vi.precio_unit_bs
+       FROM venta_items vi JOIN productos p ON p.id = vi.producto_id
+       WHERE vi.venta_id = $1`,
+      [id]
+    );
+    setItemsEditables(itemsEditablesRows);
+
     const pagoRows = await db.select<FacturaVentaPagoDetalle[]>(
-      "SELECT id, metodo, monto_bs, referencia FROM pagos WHERE venta_id = $1",
+      "SELECT id, metodo, monto_bs, referencia, verificado_admin FROM pagos WHERE venta_id = $1",
       [id]
     );
     setPagos(pagoRows);
@@ -85,6 +105,7 @@ export default function Facturas({ config }: { config: ConfigRow }) {
   // registrada — el caso típico es la caja que por un clic apurado marcó
   // "punto de venta" cuando en realidad fue biopago. El monto no se toca
   // acá: si hace falta cambiar montos, es una venta distinta, no un typo.
+  // Solo admin (ver el filtro esAdmin en el render).
   async function actualizarPago(pagoId: string, metodo: string, referencia: string) {
     const db = await getDb();
     await db.execute("UPDATE pagos SET metodo = $1, referencia = $2 WHERE id = $3", [
@@ -92,6 +113,14 @@ export default function Facturas({ config }: { config: ConfigRow }) {
       referencia.trim() || null,
       pagoId,
     ]);
+    if (seleccionada) await abrirFactura(seleccionada.id);
+  }
+
+  // Check de "el admin confirmó que este pago móvil sí llegó" — solo
+  // aplica a pagos con metodo PAGO_MOVIL, para el cuadre de caja.
+  async function marcarVerificado(pagoId: string, verificado: boolean) {
+    const db = await getDb();
+    await db.execute("UPDATE pagos SET verificado_admin = $1 WHERE id = $2", [verificado ? 1 : 0, pagoId]);
     if (seleccionada) await abrirFactura(seleccionada.id);
   }
 
@@ -117,7 +146,17 @@ export default function Facturas({ config }: { config: ConfigRow }) {
             placeholder="Buscar por N° de ticket, cliente o cédula"
             value={busqueda}
             onChange={(e) => setBusqueda(e.target.value)}
+            style={{ flex: 1 }}
           />
+          <select value={metodoFiltro} onChange={(e) => setMetodoFiltro(e.target.value)}>
+            <option value="">Todos los métodos de pago</option>
+            {METODOS_PAGO.map((m) => (
+              <option key={m} value={m}>
+                {m.split("_").join(" ")}
+              </option>
+            ))}
+            <option value="CREDITO">Crédito</option>
+          </select>
         </div>
 
         <table>
@@ -208,6 +247,26 @@ export default function Facturas({ config }: { config: ConfigRow }) {
                 ))}
               </tbody>
             </table>
+            {esAdmin && !editandoItems && (
+              <button type="button" className="link-btn no-print" onClick={() => setEditandoItems(true)}>
+                editar productos de esta venta
+              </button>
+            )}
+            {esAdmin && editandoItems && (
+              <div className="no-print">
+                <EditorItemsVenta
+                  ventaId={seleccionada.id}
+                  itemsIniciales={itemsEditables}
+                  tasaCambioDia={seleccionada.tasa_cambio_dia}
+                  onGuardado={async () => {
+                    setEditandoItems(false);
+                    await abrirFactura(seleccionada.id);
+                    await cargarLista();
+                  }}
+                  onCancelar={() => setEditandoItems(false)}
+                />
+              </div>
+            )}
             <p>Subtotal: Bs {seleccionada.subtotal_bs.toFixed(2)}</p>
             <p>IVA: Bs {seleccionada.iva_bs.toFixed(2)}</p>
             <p className="ticket-total">
@@ -217,17 +276,19 @@ export default function Facturas({ config }: { config: ConfigRow }) {
               </span>
             </p>
             <div className="no-print">
-              <p style={{ marginBottom: 4 }}>
-                Pagos — si la caja se equivocó de método (ej. marcó punto de venta y fue biopago),
-                se corrige acá:
-              </p>
+              {esAdmin && (
+                <p style={{ marginBottom: 4 }}>
+                  Pagos — si la caja se equivocó de método (ej. marcó punto de venta y fue biopago),
+                  se corrige acá:
+                </p>
+              )}
               {pagos.map((p) =>
                 p.metodo === "CREDITO" ? (
                   <div key={p.id} className="form-row" style={{ alignItems: "center" }}>
                     <span style={{ minWidth: 140 }}>Crédito pendiente</span>
                     <span className="hint" style={{ margin: 0 }}>Bs {p.monto_bs.toFixed(2)}</span>
                   </div>
-                ) : (
+                ) : esAdmin ? (
                   <div key={p.id} className="form-row" style={{ alignItems: "center" }}>
                     <select
                       defaultValue={p.metodo}
@@ -247,6 +308,26 @@ export default function Facturas({ config }: { config: ConfigRow }) {
                       onBlur={(e) => actualizarPago(p.id, p.metodo, e.target.value)}
                       style={{ maxWidth: 180 }}
                     />
+                    {p.metodo === "PAGO_MOVIL" && (
+                      <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13 }}>
+                        <input
+                          type="checkbox"
+                          checked={p.verificado_admin === 1}
+                          onChange={(e) => marcarVerificado(p.id, e.target.checked)}
+                        />
+                        Pago móvil verificado
+                      </label>
+                    )}
+                  </div>
+                ) : (
+                  <div key={p.id} className="form-row" style={{ alignItems: "center" }}>
+                    <span style={{ minWidth: 140 }}>{p.metodo.split("_").join(" ")}</span>
+                    <span className="hint" style={{ margin: 0 }}>Bs {p.monto_bs.toFixed(2)}</span>
+                    {p.metodo === "PAGO_MOVIL" && (
+                      <span className={p.verificado_admin === 1 ? "badge badge-ok" : "hint"}>
+                        {p.verificado_admin === 1 ? "Verificado ✓" : "Sin verificar"}
+                      </span>
+                    )}
                   </div>
                 )
               )}

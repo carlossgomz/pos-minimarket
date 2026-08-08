@@ -404,6 +404,144 @@ pub async fn confirmar_venta(
     Ok(resultado)
 }
 
+/// Reemplaza los productos/cantidades de una venta ya registrada — pensado
+/// para cuando la caja se equivocó al escanear algo (producto de más, de
+/// menos, o cantidad mal tecleada). Solo admin (se valida en el frontend,
+/// como el resto de los controles de admin de esta app). Por debajo:
+/// devuelve el stock de las líneas viejas, borra esas líneas, aplica las
+/// nuevas, y recalcula subtotal/total — el saldo pendiente (si la venta es
+/// a crédito) se ajusta por la MISMA diferencia que cambió el total, nunca
+/// por debajo de cero. No toca `pagos` ni `lotes_producto`: si hace falta
+/// corregir el método de pago también, es un cambio aparte (ver
+/// actualizarPago en Facturas.tsx); el costeo FIFO exacto de las líneas
+/// viejas no se reconstruye, se ajusta directo sobre `stock_actual` — igual
+/// de preciso que el resto de las correcciones administrativas de este
+/// sistema.
+#[tauri::command]
+pub async fn editar_venta_items(
+    app: tauri::AppHandle,
+    venta_id: String,
+    items: Vec<ItemVentaInput>,
+) -> Result<(), String> {
+    if items.is_empty() {
+        return Err("La venta debe tener al menos un producto.".to_string());
+    }
+    for item in &items {
+        if item.cantidad <= 0.0 {
+            return Err("Una línea tiene una cantidad inválida.".to_string());
+        }
+    }
+
+    let conn = conexion(&app).await?;
+    let tx = conn.transaction().await.map_err(|e| e.to_string())?;
+
+    let fila = tx
+        .query(
+            "SELECT total_bs, iva_bs, tasa_cambio_dia, monto_pendiente_usd, canal FROM ventas WHERE id = ?1",
+            libsql::params![venta_id.clone()],
+        )
+        .await
+        .map_err(|e| e.to_string())?
+        .next()
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "La venta no existe.".to_string())?;
+    let total_anterior: f64 = fila.get(0).map_err(|e| e.to_string())?;
+    let iva_bs: f64 = fila.get(1).map_err(|e| e.to_string())?;
+    let tasa: f64 = fila.get(2).map_err(|e| e.to_string())?;
+    let pendiente_anterior: Option<f64> = fila.get(3).map_err(|e| e.to_string())?;
+    let canal: String = fila.get(4).map_err(|e| e.to_string())?;
+    drop(fila);
+
+    if canal == "DELIVERY" {
+        return Err(
+            "Esta venta vino de un pedido de delivery — no se puede editar acá, hay que corregirla desde el pedido original.".to_string(),
+        );
+    }
+
+    // Delta neto de stock por producto: positivo = se devuelve stock
+    // (estaba en la línea vieja y ya no, o bajó la cantidad), negativo = se
+    // descuenta de más (línea nueva o cantidad subió). Un mismo producto
+    // puede aparecer en ambos lados (ej. solo cambió la cantidad), así que
+    // se acumula en vez de aplicar dos updates sueltos.
+    let mut deltas: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+
+    let mut filas = tx
+        .query(
+            "SELECT producto_id, cantidad FROM venta_items WHERE venta_id = ?1",
+            libsql::params![venta_id.clone()],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    while let Some(fila) = filas.next().await.map_err(|e| e.to_string())? {
+        let producto_id: String = fila.get(0).map_err(|e| e.to_string())?;
+        let cantidad: f64 = fila.get(1).map_err(|e| e.to_string())?;
+        *deltas.entry(producto_id).or_insert(0.0) += cantidad;
+    }
+    drop(filas);
+
+    tx.execute("DELETE FROM venta_items WHERE venta_id = ?1", libsql::params![venta_id.clone()])
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut subtotal_nuevo = 0.0;
+    for item in &items {
+        let subtotal_linea = item.precio_unit_bs * item.cantidad;
+        subtotal_nuevo += subtotal_linea;
+
+        tx.execute(
+            "INSERT INTO venta_items (id, venta_id, producto_id, cantidad, precio_unit_bs, subtotal_bs)
+             VALUES (lower(hex(randomblob(16))), ?1, ?2, ?3, ?4, ?5)",
+            libsql::params![
+                venta_id.clone(),
+                item.producto_id.clone(),
+                item.cantidad,
+                item.precio_unit_bs,
+                subtotal_linea,
+            ],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+        *deltas.entry(item.producto_id.clone()).or_insert(0.0) -= item.cantidad;
+    }
+
+    for (producto_id, delta) in &deltas {
+        if delta.abs() < 0.0001 {
+            continue;
+        }
+        tx.execute(
+            "UPDATE productos SET stock_actual = stock_actual + ?1 WHERE id = ?2",
+            libsql::params![*delta, producto_id.clone()],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+        let tipo = if *delta > 0.0 { "ENTRADA" } else { "SALIDA" };
+        tx.execute(
+            "INSERT INTO movimientos_inventario (id, producto_id, tipo, cantidad, motivo, referencia, created_at)
+             VALUES (lower(hex(randomblob(16))), ?1, ?2, ?3, 'Corrección de productos de una venta (admin)', ?4, datetime('now'))",
+            libsql::params![producto_id.clone(), tipo, delta.abs(), venta_id.clone()],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+
+    let total_nuevo = subtotal_nuevo + iva_bs;
+    let delta_usd = if tasa > 0.0 { (total_nuevo - total_anterior) / tasa } else { 0.0 };
+    let pendiente_nuevo = pendiente_anterior.map(|p| (p + delta_usd).max(0.0));
+
+    tx.execute(
+        "UPDATE ventas SET subtotal_bs = ?1, total_bs = ?2, monto_pendiente_usd = ?3 WHERE id = ?4",
+        libsql::params![subtotal_nuevo, total_nuevo, pendiente_nuevo, venta_id.clone()],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    tx.commit().await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct AjustarStockInput {
     producto_id: String,

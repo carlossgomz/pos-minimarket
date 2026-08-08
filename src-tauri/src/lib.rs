@@ -65,6 +65,7 @@ pub fn run() {
             offline::estado_conexion,
             ia::escanear_factura,
             comandos::confirmar_venta,
+            comandos::editar_venta_items,
             comandos::ajustar_stock,
             comandos::registrar_abono_cliente,
             comandos::registrar_abono_cliente_total,

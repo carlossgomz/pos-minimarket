@@ -1,0 +1,1 @@
+ALTER TABLE pagos ADD COLUMN verificado_admin INTEGER NOT NULL DEFAULT 0;

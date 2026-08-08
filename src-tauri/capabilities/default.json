@@ -15,6 +15,7 @@
     "allow-estado-conexion",
     "allow-escanear-factura",
     "allow-confirmar-venta",
+    "allow-editar-venta-items",
     "allow-ajustar-stock",
     "allow-registrar-abono-cliente",
     "allow-registrar-abono-cliente-total",

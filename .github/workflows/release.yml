@@ -42,13 +42,11 @@ jobs:
     runs-on: windows-latest
     strategy:
       fail-fast: false
-      # Uno a la vez: ambos targets escriben en el mismo latest.json del
-      # Release y corriendo en paralelo se podrían pisar el uno al otro.
-      max-parallel: 1
       matrix:
-        # x86_64 para PCs de 64 bits (la mayoría) e i686 por si alguna
-        # PC de caja resulta ser de 32 bits.
-        target: [x86_64-pc-windows-msvc, i686-pc-windows-msvc]
+        # Solo 64 bits — todas las PCs de caja son de 64 bits y compilar
+        # también i686 duplicaba el tiempo de release para nada. Si algún
+        # día hace falta 32 bits de nuevo, se agrega i686-pc-windows-msvc acá.
+        target: [x86_64-pc-windows-msvc]
     steps:
       - uses: actions/checkout@v4
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { check, Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -189,20 +189,57 @@ export default function App() {
   }, [configSyncLista, usuarioActual]);
 
   // Pedidos de delivery recién llegados sin revisar (ver delivery.rs, tarea
-  // de fondo cada ~30s) — mismo criterio que el aviso de stock: solo admin,
-  // porque es quien tiene forma de hacer algo al respecto.
+  // de fondo cada ~30s) — visible para CUALQUIER rol logueado (admin y
+  // cajero): quien esté físicamente en la tienda tiene que enterarse,
+  // aunque solo el admin pueda entrar al panel de la delivery-app a
+  // resolverlo desde ahí.
   const [pedidosDeliveryPendientes, setPedidosDeliveryPendientes] = useState(0);
+  // Referencia (no estado) al último conteo conocido, para poder comparar
+  // "¿subió?" sin que la comparación misma dispare un re-render.
+  const pedidosDeliveryPendientesAnteriorRef = useRef(0);
+
+  // Beep de dos tonos con Web Audio (sin archivo de audio que empaquetar)
+  // — suena cada vez que el conteo de pedidos pendientes SUBE respecto al
+  // último valor conocido, para que se note en el momento que llega un
+  // pedido nuevo y no se pierda entre el ruido de la tienda.
+  function reproducirAlarmaPedido() {
+    try {
+      const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const ctx = new Ctx();
+      const ahora = ctx.currentTime;
+      [0, 0.35].forEach((offset) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = 880;
+        gain.gain.setValueAtTime(0.0001, ahora + offset);
+        gain.gain.exponentialRampToValueAtTime(0.35, ahora + offset + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, ahora + offset + 0.3);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(ahora + offset);
+        osc.stop(ahora + offset + 0.35);
+      });
+    } catch {
+      // si el navegador bloquea audio (ej. sin interacción previa), no pasa nada
+    }
+  }
 
   async function cargarPedidosDeliveryPendientes() {
     try {
-      setPedidosDeliveryPendientes(await invoke<number>("obtener_pedidos_delivery_pendientes"));
+      const n = await invoke<number>("obtener_pedidos_delivery_pendientes");
+      if (n > pedidosDeliveryPendientesAnteriorRef.current) {
+        reproducirAlarmaPedido();
+      }
+      pedidosDeliveryPendientesAnteriorRef.current = n;
+      setPedidosDeliveryPendientes(n);
     } catch {
       // si falla, se reintenta solo en el próximo ciclo
     }
   }
 
   useEffect(() => {
-    if (!configSyncLista || usuarioActual?.rol !== "ADMIN") return;
+    if (!configSyncLista || !usuarioActual) return;
     cargarPedidosDeliveryPendientes();
     // Cada 5s, igual que la tarea de fondo en Rust que llena este dato —
     // el aviso de pedido pendiente tiene que sentirse casi inmediato.
@@ -381,15 +418,19 @@ export default function App() {
               ⚠ {productosStockBajo} en 1 unidad o agotados
             </button>
           )}
-          {esAdmin && pedidosDeliveryPendientes > 0 && (
+          {pedidosDeliveryPendientes > 0 && (
             <button
               type="button"
               className="link-btn"
-              style={{ color: "#1a6b8f" }}
+              style={{ color: "#1a6b8f", fontWeight: 700 }}
               onClick={() => {
-                if (config?.delivery_api_url) open(`${config.delivery_api_url}/admin/pedidos`);
+                if (esAdmin && config?.delivery_api_url) open(`${config.delivery_api_url}/admin/pedidos`);
               }}
-              title="Abrir los pedidos en la app de delivery"
+              title={
+                esAdmin
+                  ? "Abrir los pedidos en la app de delivery"
+                  : "Avisa a un admin para que lo revise en la app de delivery"
+              }
             >
               📦 {pedidosDeliveryPendientes} pedido{pedidosDeliveryPendientes === 1 ? "" : "s"} de
               delivery pendiente{pedidosDeliveryPendientes === 1 ? "" : "s"}

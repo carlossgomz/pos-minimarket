@@ -51,9 +51,15 @@ export default function Estadisticas({ config }: { config: ConfigRow }) {
     try {
       const db = await getDb();
 
+      // Un producto por peso (ej. ají dulce) cuenta como 1 producto
+      // vendido por línea, no como los kilos que pesó esa venta — mezclar
+      // kilos con unidades da un número sin sentido en este ranking. Solo
+      // afecta este conteo; el monto en Bs sigue siendo el real.
       setProductosPorCantidad(
         await db.select<ProductoTop[]>(
-          `SELECT vi.producto_id, p.nombre, SUM(vi.cantidad) as cantidad, SUM(vi.subtotal_bs) as monto_bs
+          `SELECT vi.producto_id, p.nombre,
+                  SUM(CASE WHEN p.por_peso = 1 THEN 1 ELSE vi.cantidad END) as cantidad,
+                  SUM(vi.subtotal_bs) as monto_bs
            FROM venta_items vi
            JOIN ventas v ON v.id = vi.venta_id
            JOIN productos p ON p.id = vi.producto_id

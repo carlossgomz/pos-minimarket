@@ -15,6 +15,20 @@ import EditorItemsVenta from "./EditorItemsVenta";
 
 const EPS = 0.01;
 
+// Análisis de vencimiento de cuentas por pagar: cuántos días pasaron
+// desde que se creó la factura del proveedor, para saber cuáles llevan
+// más tiempo sin pagarse.
+function diasTranscurridos(fecha: string): number {
+  const inicio = new Date(fecha).getTime();
+  return Math.max(0, Math.floor((Date.now() - inicio) / 86_400_000));
+}
+
+function colorVencimiento(dias: number): string {
+  if (dias > 30) return "#a32d2d"; // vencida hace rato
+  if (dias > 15) return "#b9770e"; // se está poniendo vieja
+  return "#5f5e5a";
+}
+
 function CuentasPorCobrar({ config, esAdmin }: { config: ConfigRow; esAdmin: boolean }) {
   const [clientes, setClientes] = useState<ClienteDeudor[]>([]);
   const [cedulaAbierta, setCedulaAbierta] = useState<string | null>(null);
@@ -496,6 +510,7 @@ function CuentasPorPagar({ config }: { config: ConfigRow }) {
                         <tr>
                           <th>Factura</th>
                           <th>Fecha</th>
+                          <th>Días</th>
                           <th>Moneda</th>
                           <th>Total USD</th>
                           <th>Saldo USD</th>
@@ -507,10 +522,14 @@ function CuentasPorPagar({ config }: { config: ConfigRow }) {
                       <tbody>
                         {facturas.map((f) => {
                           const saldoUsd = f.monto_total_usd - f.monto_pagado_usd;
+                          const dias = diasTranscurridos(f.fecha);
                           return (
                             <tr key={f.id}>
                               <td>{f.numero_factura}</td>
                               <td>{new Date(f.fecha).toLocaleDateString("es-VE")}</td>
+                              <td style={{ color: colorVencimiento(dias), fontWeight: dias > 15 ? 700 : 400 }}>
+                                {dias}
+                              </td>
                               <td>{f.moneda}</td>
                               <td>{f.monto_total_usd.toFixed(2)}</td>
                               <td>{saldoUsd.toFixed(2)}</td>

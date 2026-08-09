@@ -113,13 +113,20 @@ export default function Reportes({ config }: { config: ConfigRow }) {
       // una vez por cada método presente (se avisa abajo). El total
       // global se calcula aparte, directo de venta_items, para que ESE
       // número sí sea exacto sin importar los pagos divididos.
+      //
+      // Un producto por peso (ej. 0.945kg de ají dulce) cuenta como 1
+      // producto vendido, no como 0.945 — mezclar kilos con unidades en un
+      // mismo total da un número sin sentido. Esto es solo para estos
+      // conteos de Reportes/Estadísticas: el stock, las facturas y todo lo
+      // demás siguen usando la cantidad real.
       const metodos = await db.select<{ metodo: string; cantidad_productos: number; monto_bs: number }[]>(
         `SELECT pg.metodo,
-                SUM(vi.cantidad) as cantidad_productos,
+                SUM(CASE WHEN p.por_peso = 1 THEN 1 ELSE vi.cantidad END) as cantidad_productos,
                 SUM(vi.subtotal_bs) as monto_bs
          FROM pagos pg
          JOIN ventas v ON v.id = pg.venta_id
          JOIN venta_items vi ON vi.venta_id = v.id
+         JOIN productos p ON p.id = vi.producto_id
          WHERE date(v.fecha_hora) BETWEEN $1 AND $2
          GROUP BY pg.metodo
          ORDER BY cantidad_productos DESC`,
@@ -128,8 +135,10 @@ export default function Reportes({ config }: { config: ConfigRow }) {
       setPorMetodo(metodos);
 
       const totalGlobal = await db.select<{ total: number | null }[]>(
-        `SELECT SUM(vi.cantidad) as total
-         FROM venta_items vi JOIN ventas v ON v.id = vi.venta_id
+        `SELECT SUM(CASE WHEN p.por_peso = 1 THEN 1 ELSE vi.cantidad END) as total
+         FROM venta_items vi
+         JOIN ventas v ON v.id = vi.venta_id
+         JOIN productos p ON p.id = vi.producto_id
          WHERE date(v.fecha_hora) BETWEEN $1 AND $2`,
         [desde, hasta]
       );

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-eliminar-venta"
+description = "Enables the eliminar_venta command without any pre-configured scope."
+commands.allow = ["eliminar_venta"]
+
+[[permission]]
+identifier = "deny-eliminar-venta"
+description = "Denies the eliminar_venta command without any pre-configured scope."
+commands.deny = ["eliminar_venta"]

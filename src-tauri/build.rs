@@ -15,6 +15,7 @@ fn main() {
                 "escanear_factura",
                 "confirmar_venta",
                 "editar_venta_items",
+                "eliminar_venta",
                 "ajustar_stock",
                 "registrar_abono_cliente",
                 "registrar_abono_cliente_total",

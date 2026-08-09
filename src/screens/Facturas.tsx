@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { getDb } from "../db";
 import {
   ConfigRow,
@@ -36,6 +37,7 @@ export default function Facturas({ config, esAdmin }: { config: ConfigRow; esAdm
   const [itemsEditables, setItemsEditables] = useState<FacturaVentaItemEditable[]>([]);
   const [pagos, setPagos] = useState<FacturaVentaPagoDetalle[]>([]);
   const [editandoItems, setEditandoItems] = useState(false);
+  const [mensajeEliminar, setMensajeEliminar] = useState<string | null>(null);
 
   async function cargarLista() {
     const db = await getDb();
@@ -122,6 +124,30 @@ export default function Facturas({ config, esAdmin }: { config: ConfigRow; esAdm
     const db = await getDb();
     await db.execute("UPDATE pagos SET verificado_admin = $1 WHERE id = $2", [verificado ? 1 : 0, pagoId]);
     if (seleccionada) await abrirFactura(seleccionada.id);
+  }
+
+  // Solo admin (ver el filtro esAdmin en el render). Revierte el stock de
+  // cada línea y borra la venta por completo — bloqueada si vino de
+  // delivery o si el cliente ya abonó contra ella (ver eliminar_venta en
+  // src-tauri/src/comandos.rs).
+  async function eliminarFactura() {
+    if (!seleccionada) return;
+    if (
+      !window.confirm(
+        `¿Eliminar la factura ${seleccionada.numero_ticket}? Esto revierte el stock y no se puede deshacer.`
+      )
+    ) {
+      return;
+    }
+    setMensajeEliminar(null);
+    try {
+      await invoke("eliminar_venta", { ventaId: seleccionada.id });
+    } catch (e) {
+      setMensajeEliminar(`No se pudo eliminar: ${String(e)}`);
+      return;
+    }
+    setSeleccionada(null);
+    await cargarLista();
   }
 
   function formatearFechaHora(fh: string) {
@@ -336,11 +362,17 @@ export default function Facturas({ config, esAdmin }: { config: ConfigRow; esAdm
             {seleccionada.monto_pendiente_usd != null && seleccionada.monto_pendiente_usd > 0 && (
               <p className="restante-pendiente">Saldo pendiente: USD {seleccionada.monto_pendiente_usd.toFixed(2)}</p>
             )}
+            {mensajeEliminar && <p className="error no-print">{mensajeEliminar}</p>}
             <div className="form-row no-print">
               <button onClick={() => window.print()}>Reimprimir</button>
               <button className="link-btn" onClick={() => setSeleccionada(null)}>
                 cerrar
               </button>
+              {esAdmin && (
+                <button className="link-btn link-btn-danger" onClick={eliminarFactura}>
+                  eliminar factura
+                </button>
+              )}
             </div>
           </div>
         )}

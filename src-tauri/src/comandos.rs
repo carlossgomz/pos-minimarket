@@ -542,6 +542,99 @@ pub async fn editar_venta_items(
     Ok(())
 }
 
+/// Elimina por completo una venta ya registrada — solo admin (se valida en
+/// el frontend). Bloqueada si: vino de un pedido de delivery (hay que
+/// corregirla desde ahí, para no desincronizar con la delivery-app), o si
+/// el cliente ya hizo algún abono contra ella (borrar la venta dejaría ese
+/// cobro sin factura a la que corresponder). El stock de cada línea se
+/// devuelve, igual que en editar_venta_items.
+async fn venta_bloqueo(tx: &libsql::Transaction, venta_id: &str) -> Result<Option<String>, String> {
+    let fila = tx
+        .query("SELECT COUNT(*) FROM cobros_cliente WHERE venta_id = ?1", libsql::params![venta_id.to_string()])
+        .await
+        .map_err(|e| e.to_string())?
+        .next()
+        .await
+        .map_err(|e| e.to_string())?;
+    let abonos: i64 = match fila {
+        Some(f) => f.get(0).map_err(|e| e.to_string())?,
+        None => 0,
+    };
+    if abonos > 0 {
+        return Ok(Some(
+            "Esta venta ya tiene abonos de cliente registrados — no se puede eliminar (afectaría ese historial de cobros)."
+                .to_string(),
+        ));
+    }
+    Ok(None)
+}
+
+#[tauri::command]
+pub async fn eliminar_venta(app: tauri::AppHandle, venta_id: String) -> Result<(), String> {
+    let conn = conexion(&app).await?;
+    let tx = conn.transaction().await.map_err(|e| e.to_string())?;
+
+    let fila = tx
+        .query("SELECT canal FROM ventas WHERE id = ?1", libsql::params![venta_id.clone()])
+        .await
+        .map_err(|e| e.to_string())?
+        .next()
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "La venta no existe.".to_string())?;
+    let canal: String = fila.get(0).map_err(|e| e.to_string())?;
+    drop(fila);
+
+    if canal == "DELIVERY" {
+        return Err(
+            "Esta venta vino de un pedido de delivery — no se puede eliminar acá, hay que corregirla desde el pedido original."
+                .to_string(),
+        );
+    }
+
+    if let Some(motivo) = venta_bloqueo(&tx, &venta_id).await? {
+        return Err(motivo);
+    }
+
+    let mut filas = tx
+        .query(
+            "SELECT producto_id, cantidad FROM venta_items WHERE venta_id = ?1",
+            libsql::params![venta_id.clone()],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    while let Some(fila) = filas.next().await.map_err(|e| e.to_string())? {
+        let producto_id: String = fila.get(0).map_err(|e| e.to_string())?;
+        let cantidad: f64 = fila.get(1).map_err(|e| e.to_string())?;
+        tx.execute(
+            "UPDATE productos SET stock_actual = stock_actual + ?1 WHERE id = ?2",
+            libsql::params![cantidad, producto_id],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+    drop(filas);
+
+    tx.execute(
+        "DELETE FROM movimientos_inventario WHERE referencia = ?1",
+        libsql::params![venta_id.clone()],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM pagos WHERE venta_id = ?1", libsql::params![venta_id.clone()])
+        .await
+        .map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM venta_items WHERE venta_id = ?1", libsql::params![venta_id.clone()])
+        .await
+        .map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM ventas WHERE id = ?1", libsql::params![venta_id.clone()])
+        .await
+        .map_err(|e| e.to_string())?;
+
+    tx.commit().await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct AjustarStockInput {
     producto_id: String,

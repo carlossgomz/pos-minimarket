@@ -15,6 +15,7 @@ export default function Clientes() {
   const [telefono, setTelefono] = useState("");
   const [direccion, setDireccion] = useState("");
   const [mensaje, setMensaje] = useState<string | null>(null);
+  const [mensajeFicha, setMensajeFicha] = useState<string | null>(null);
 
   async function cargarClientes() {
     const db = await getDb();
@@ -38,6 +39,7 @@ export default function Clientes() {
   async function abrirFicha(c: Cliente) {
     setSeleccionado(c);
     setMensaje(null);
+    setMensajeFicha(null);
     const db = await getDb();
     const saldo = await db.select<{ total: number }[]>(
       "SELECT COALESCE(SUM(monto_pendiente_usd), 0) as total FROM ventas WHERE cliente_cedula = $1 AND estado = 'CREDITO_PENDIENTE'",
@@ -90,6 +92,47 @@ export default function Clientes() {
     await db.execute("UPDATE clientes SET direccion = $1 WHERE id = $2", [valor || null, c.id]);
     setSeleccionado({ ...c, direccion: valor || null });
     await cargarClientes();
+  }
+
+  async function actualizarNombre(c: Cliente, nuevoNombre: string) {
+    const valor = nuevoNombre.trim();
+    if (!valor || valor === c.nombre) return;
+    const db = await getDb();
+    await db.execute("UPDATE clientes SET nombre = $1 WHERE id = $2", [valor, c.id]);
+    setSeleccionado({ ...c, nombre: valor });
+    await cargarClientes();
+  }
+
+  async function actualizarTelefono(c: Cliente, nuevoTelefono: string) {
+    const valor = nuevoTelefono.trim();
+    if (valor === (c.telefono ?? "")) return;
+    const db = await getDb();
+    await db.execute("UPDATE clientes SET telefono = $1 WHERE id = $2", [valor || null, c.id]);
+    setSeleccionado({ ...c, telefono: valor || null });
+    await cargarClientes();
+  }
+
+  // La cédula es la clave con la que se buscan las compras de un cliente
+  // (ventas.cliente_cedula es una "foto" del momento, no una referencia
+  // viva) — así que al corregirla también hay que actualizar sus ventas ya
+  // registradas, o se perdería el historial de este cliente. El nombre y
+  // el teléfono NO se propagan a ventas viejas a propósito: esas quedan
+  // como estaban en el momento de cada compra.
+  async function actualizarCedula(c: Cliente, nuevaCedula: string) {
+    const valor = nuevaCedula.trim();
+    if (!valor || valor === c.cedula) return;
+    const db = await getDb();
+    try {
+      await db.execute("UPDATE clientes SET cedula = $1 WHERE id = $2", [valor, c.id]);
+    } catch (e) {
+      setMensajeFicha(`No se pudo cambiar la cédula (¿ya hay otro cliente con esa cédula?): ${String(e)}`);
+      return;
+    }
+    await db.execute("UPDATE ventas SET cliente_cedula = $1 WHERE cliente_cedula = $2", [valor, c.cedula]);
+    setMensajeFicha(null);
+    const actualizado = { ...c, cedula: valor };
+    await cargarClientes();
+    await abrirFicha(actualizado);
   }
 
   return (
@@ -155,14 +198,39 @@ export default function Clientes() {
             <h2>
               {seleccionado.nombre} {seleccionado.cliente_app_id && <span className="badge badge-ok">📱 App</span>}
             </h2>
-            <p className="hint">
-              Cédula: {seleccionado.cedula}
-              {seleccionado.telefono ? ` · Tel: ${seleccionado.telefono}` : ""}
-            </p>
+            {mensajeFicha && <p className="error">{mensajeFicha}</p>}
+            <div className="form-row" style={{ alignItems: "center" }}>
+              <label style={{ alignSelf: "center" }}>Nombre</label>
+              <input
+                key={`nombre-${seleccionado.id}`}
+                defaultValue={seleccionado.nombre}
+                onBlur={(e) => actualizarNombre(seleccionado, e.target.value)}
+                style={{ flex: 1 }}
+              />
+            </div>
+            <div className="form-row" style={{ alignItems: "center" }}>
+              <label style={{ alignSelf: "center" }}>Cédula</label>
+              <input
+                key={`cedula-${seleccionado.id}`}
+                defaultValue={seleccionado.cedula}
+                onBlur={(e) => actualizarCedula(seleccionado, e.target.value)}
+                style={{ flex: 1 }}
+              />
+            </div>
+            <div className="form-row" style={{ alignItems: "center" }}>
+              <label style={{ alignSelf: "center" }}>Teléfono</label>
+              <input
+                key={`telefono-${seleccionado.id}`}
+                placeholder="Sin teléfono registrado"
+                defaultValue={seleccionado.telefono ?? ""}
+                onBlur={(e) => actualizarTelefono(seleccionado, e.target.value)}
+                style={{ flex: 1 }}
+              />
+            </div>
             <div className="form-row" style={{ alignItems: "center" }}>
               <label style={{ alignSelf: "center" }}>Dirección</label>
               <input
-                key={seleccionado.id}
+                key={`direccion-${seleccionado.id}`}
                 placeholder="Sin dirección registrada"
                 defaultValue={seleccionado.direccion ?? ""}
                 onBlur={(e) => actualizarDireccion(seleccionado, e.target.value)}

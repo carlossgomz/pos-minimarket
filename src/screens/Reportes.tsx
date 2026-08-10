@@ -59,6 +59,32 @@ export default function Reportes({ config }: { config: ConfigRow }) {
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Capital inventariado vs. cuentas por pagar: una foto de "ahora mismo",
+  // no depende del rango desde/hasta de arriba (esos son métricas de
+  // ventas en un período; esto es la salud financiera actual del negocio).
+  const [capitalInventarioUsd, setCapitalInventarioUsd] = useState(0);
+  const [cuentasPorPagarUsd, setCuentasPorPagarUsd] = useState(0);
+
+  async function cargarCapitalVsPagar() {
+    const db = await getDb();
+    // A costo (lo que costó reponer ese stock), no a precio de venta —
+    // "capital inventariado" es cuánto dinero quedó convertido en
+    // mercancía, no cuánto se ganaría vendiéndola toda.
+    const inventario = await db.select<{ total: number | null }[]>(
+      "SELECT SUM(costo_actual_usd * stock_actual) as total FROM productos"
+    );
+    setCapitalInventarioUsd(inventario[0]?.total ?? 0);
+
+    const pagar = await db.select<{ total: number | null }[]>(
+      "SELECT SUM(monto_total_usd - monto_pagado_usd) as total FROM facturas_compra WHERE estado != 'PAGADA'"
+    );
+    setCuentasPorPagarUsd(pagar[0]?.total ?? 0);
+  }
+
+  useEffect(() => {
+    cargarCapitalVsPagar();
+  }, []);
+
   async function cargar() {
     setCargando(true);
     setError(null);
@@ -268,6 +294,46 @@ export default function Reportes({ config }: { config: ConfigRow }) {
         Conversión a USD con la tasa del día de hoy ({config.tasa_cambio_dia.toFixed(2)} Bs/$) — no la tasa de
         cada venta individual.
       </p>
+
+      <div className="card">
+        <h2>Capital en inventario vs. cuentas por pagar</h2>
+        <p className="hint" style={{ marginTop: 0 }}>
+          Foto de ahora mismo (no depende del rango de fechas de arriba). El inventario está a
+          costo, no a precio de venta.
+        </p>
+        <div className="venta-layout">
+          <div>
+            <p className="hint" style={{ margin: 0 }}>Capital inventariado</p>
+            <p className="ticket-total" style={{ margin: 0 }}>
+              USD {capitalInventarioUsd.toFixed(2)}{" "}
+              <span style={{ fontWeight: 400, fontSize: 13, color: "#5f5e5a" }}>
+                (Bs {(capitalInventarioUsd * config.tasa_cambio_dia).toFixed(2)})
+              </span>
+            </p>
+          </div>
+          <div>
+            <p className="hint" style={{ margin: 0 }}>Cuentas por pagar (proveedores)</p>
+            <p className="ticket-total" style={{ margin: 0 }}>
+              USD {cuentasPorPagarUsd.toFixed(2)}{" "}
+              <span style={{ fontWeight: 400, fontSize: 13, color: "#5f5e5a" }}>
+                (Bs {(cuentasPorPagarUsd * config.tasa_cambio_dia).toFixed(2)})
+              </span>
+            </p>
+          </div>
+          <div>
+            <p className="hint" style={{ margin: 0 }}>Capital neto</p>
+            <p
+              className="ticket-total"
+              style={{ margin: 0, color: capitalInventarioUsd - cuentasPorPagarUsd >= 0 ? "#2e7d32" : "#a32d2d" }}
+            >
+              USD {(capitalInventarioUsd - cuentasPorPagarUsd).toFixed(2)}{" "}
+              <span style={{ fontWeight: 400, fontSize: 13, color: "#5f5e5a" }}>
+                (Bs {((capitalInventarioUsd - cuentasPorPagarUsd) * config.tasa_cambio_dia).toFixed(2)})
+              </span>
+            </p>
+          </div>
+        </div>
+      </div>
 
       {(numTienda > 0 || numDelivery > 0) && (
         <div className="card">

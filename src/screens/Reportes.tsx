@@ -106,32 +106,52 @@ export default function Reportes({ config }: { config: ConfigRow }) {
       );
       setPorCanal(canales);
 
-      // Productos vendidos por método de pago: se atribuyen todos los
-      // ítems de una venta a cada método con que se pagó — en el caso
-      // normal (una venta, un método) da el número exacto; si una venta
-      // se pagó dividida entre varios métodos, sus productos se cuentan
-      // una vez por cada método presente (se avisa abajo). El total
-      // global se calcula aparte, directo de venta_items, para que ESE
-      // número sí sea exacto sin importar los pagos divididos.
+      // Monto por método de pago: se calcula directo de pagos.monto_bs (lo
+      // que REALMENTE se cobró por cada método), igual que Cuadre de Caja —
+      // así los dos coinciden siempre, incluso con ventas de pago dividido
+      // (ej. mitad pago móvil, mitad efectivo). Antes salía de sumar
+      // venta_items después de unir con pagos, lo que en una venta con
+      // pago dividido contaba el total COMPLETO de la venta bajo cada
+      // método en vez de solo la porción de ese método — de ahí el
+      // descuadre con el Cuadre de Caja.
+      const montosPorMetodo = await db.select<{ metodo: string; monto_bs: number }[]>(
+        `SELECT pg.metodo, SUM(pg.monto_bs) as monto_bs
+         FROM pagos pg
+         JOIN ventas v ON v.id = pg.venta_id
+         WHERE date(v.fecha_hora) BETWEEN $1 AND $2
+         GROUP BY pg.metodo`,
+        [desde, hasta]
+      );
+
+      // Cantidad de productos por método: acá SÍ hace falta unir con
+      // venta_items, y en una venta con pago dividido sus productos se
+      // cuentan una vez por cada método presente (no hay forma exacta de
+      // repartir "qué producto pagó cada método" sin guardar esa relación
+      // — se avisa en el pie de la tabla). No afecta el monto en Bs de
+      // arriba, que ya es exacto.
       //
       // Un producto por peso (ej. 0.945kg de ají dulce) cuenta como 1
       // producto vendido, no como 0.945 — mezclar kilos con unidades en un
       // mismo total da un número sin sentido. Esto es solo para estos
       // conteos de Reportes/Estadísticas: el stock, las facturas y todo lo
       // demás siguen usando la cantidad real.
-      const metodos = await db.select<{ metodo: string; cantidad_productos: number; monto_bs: number }[]>(
+      const cantidadesPorMetodo = await db.select<{ metodo: string; cantidad_productos: number }[]>(
         `SELECT pg.metodo,
-                SUM(CASE WHEN p.por_peso = 1 THEN 1 ELSE vi.cantidad END) as cantidad_productos,
-                SUM(vi.subtotal_bs) as monto_bs
+                SUM(CASE WHEN p.por_peso = 1 THEN 1 ELSE vi.cantidad END) as cantidad_productos
          FROM pagos pg
          JOIN ventas v ON v.id = pg.venta_id
          JOIN venta_items vi ON vi.venta_id = v.id
          JOIN productos p ON p.id = vi.producto_id
          WHERE date(v.fecha_hora) BETWEEN $1 AND $2
-         GROUP BY pg.metodo
-         ORDER BY cantidad_productos DESC`,
+         GROUP BY pg.metodo`,
         [desde, hasta]
       );
+      const cantidadPorMetodoMapa: Record<string, number> = {};
+      for (const c of cantidadesPorMetodo) cantidadPorMetodoMapa[c.metodo] = c.cantidad_productos;
+
+      const metodos = montosPorMetodo
+        .map((m) => ({ metodo: m.metodo, monto_bs: m.monto_bs, cantidad_productos: cantidadPorMetodoMapa[m.metodo] ?? 0 }))
+        .sort((a, b) => b.monto_bs - a.monto_bs);
       setPorMetodo(metodos);
 
       const totalGlobal = await db.select<{ total: number | null }[]>(
@@ -290,8 +310,9 @@ export default function Reportes({ config }: { config: ConfigRow }) {
             </tbody>
           </table>
           <p className="hint" style={{ marginTop: 8 }}>
-            Si una venta se pagó dividida entre varios métodos, sus productos se cuentan una vez por
-            cada método usado — por eso la fila "Total global" se calcula aparte y es la exacta.
+            El monto Bs es exacto (coincide con Cuadre de Caja). La cantidad de productos, si una
+            venta se pagó dividida entre varios métodos, cuenta esos productos una vez por cada
+            método usado — por eso la fila "Total global" se calcula aparte y es la exacta.
           </p>
         </div>
       )}

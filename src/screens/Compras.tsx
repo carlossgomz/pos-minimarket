@@ -61,6 +61,12 @@ export default function Compras({
   const [productoSeleccionado, setProductoSeleccionado] = useState<Producto | null>(null);
   const [nombreNuevo, setNombreNuevo] = useState("");
   const [categoriaNuevo, setCategoriaNuevo] = useState("");
+  // Se activa con el botón "crear producto nuevo" — permite agregar un
+  // producto sin haber tecleado ningún código de proveedor (no todos los
+  // proveedores traen uno en su factura, o a veces no vale la pena
+  // buscarlo). Con esto en true se muestran los campos de nombre/categoría
+  // aunque el campo de código esté vacío.
+  const [creandoProductoNuevo, setCreandoProductoNuevo] = useState(false);
 
   const [cajas, setCajas] = useState("0");
   const [unidadSuelta, setUnidadSuelta] = useState("0");
@@ -365,6 +371,7 @@ export default function Compras({
   // ahí se reemplaza por el código que el sistema ya le conoce al
   // producto, editable después a mano si hace falta.
   function seleccionarProductoExistente(p: Producto, mantenerCodigoEscrito = false) {
+    setCreandoProductoNuevo(false);
     setProductoSeleccionado(p);
     if (!mantenerCodigoEscrito) {
       setCodigoBusqueda(p.codigo_proveedor ?? p.codigo_barra);
@@ -383,6 +390,21 @@ export default function Compras({
     setCategoriaNuevo("");
     setMargen("30");
     setUnidadesPorPaquete("1");
+  }
+
+  // Botón "crear producto nuevo" — para cuando la factura del proveedor no
+  // trae código, o no vale la pena buscarlo. Habilita los campos de
+  // nombre/categoría (cajas, margen, etc. ya están siempre visibles más
+  // abajo) sin necesidad de escribir nada en el campo de código.
+  function empezarProductoNuevoManual() {
+    setProductoSeleccionado(null);
+    setResultadosCodigo([]);
+    setMostrarDropdownCodigo(false);
+    setNombreNuevo("");
+    setCategoriaNuevo("");
+    setMargen("30");
+    setUnidadesPorPaquete("1");
+    setCreandoProductoNuevo(true);
   }
 
   // Busca por código exacto — de barras O de proveedor (lo normal al leer
@@ -463,10 +485,6 @@ export default function Compras({
     setMensaje(null);
 
     const codigo = codigoBusqueda.trim();
-    if (!codigo) {
-      setMensaje("Falta el código del proveedor.");
-      return;
-    }
     if (unidadesPorPaqueteNum <= 0) {
       setMensaje("Las unidades por caja deben ser mayor a 0.");
       return;
@@ -494,7 +512,7 @@ export default function Compras({
         {
           producto_id: productoSeleccionado.id,
           codigo_barra: productoSeleccionado.codigo_barra,
-          codigoProveedor: codigo,
+          codigoProveedor: codigo || undefined,
           nombre: productoSeleccionado.nombre,
           es_nuevo: false,
           cajas: cajasNum,
@@ -526,7 +544,7 @@ export default function Compras({
           // primera venta (ver Venta.tsx).
           producto_id: crypto.randomUUID(),
           codigo_barra: `SINCOD-${crypto.randomUUID()}`,
-          codigoProveedor: codigo,
+          codigoProveedor: codigo || undefined,
           nombre: nombreNuevo.trim(),
           es_nuevo: true,
           categoria: categoriaNuevo || undefined,
@@ -550,6 +568,7 @@ export default function Compras({
     setProductoSeleccionado(null);
     setNombreNuevo("");
     setCategoriaNuevo("");
+    setCreandoProductoNuevo(false);
     setCajas("0");
     setUnidadSuelta("0");
     setUnidadesPorPaquete("1");
@@ -873,19 +892,28 @@ export default function Compras({
           código ya existe, se reconoce solo; si no, se crea el producto nuevo al guardar. Este
           código es el del PROVEEDOR (el que trae su factura) — no hace falta el código de barras
           real, eso se asigna después escaneándolo en la tienda (ver "pendientes de código de
-          barras" en Inventario).
+          barras" en Inventario). El código es <strong>opcional</strong>: si el proveedor no trae
+          uno, usa el botón "crear producto nuevo" de abajo.
         </p>
 
         <div style={{ position: "relative", maxWidth: 420, marginTop: 12 }}>
-          <Campo label="Código del proveedor (como en la factura)">
+          <Campo label="Código del proveedor (opcional)">
             <input
               value={codigoBusqueda}
-              onChange={(e) => setCodigoBusqueda(e.target.value)}
+              onChange={(e) => {
+                setCodigoBusqueda(e.target.value);
+                if (e.target.value.trim()) setCreandoProductoNuevo(false);
+              }}
               onFocus={() => resultadosCodigo.length > 0 && setMostrarDropdownCodigo(true)}
               onBlur={() => setTimeout(() => setMostrarDropdownCodigo(false), 150)}
               autoFocus
             />
           </Campo>
+          {!productoSeleccionado && !creandoProductoNuevo && !codigoBusqueda.trim() && (
+            <button type="button" className="link-btn" style={{ marginTop: 6 }} onClick={empezarProductoNuevoManual}>
+              + crear producto nuevo (sin código de proveedor)
+            </button>
+          )}
           {mostrarDropdownCodigo && resultadosCodigo.length > 0 && (
             <ul
               style={{
@@ -936,14 +964,27 @@ export default function Compras({
               </button>
             </div>
           ) : (
-            codigoBusqueda.trim() && (
+            (codigoBusqueda.trim() || creandoProductoNuevo) && (
               <>
                 <div className="aviso-producto aviso-producto-nuevo" style={{ marginBottom: 12 }}>
-                  <span>⚠ Este código no existe todavía — se creará un producto nuevo.</span>
+                  <span>
+                    {codigoBusqueda.trim()
+                      ? "⚠ Este código no existe todavía — se creará un producto nuevo."
+                      : "Creando un producto nuevo sin código de proveedor."}
+                  </span>
+                  {creandoProductoNuevo && !codigoBusqueda.trim() && (
+                    <button
+                      type="button"
+                      className="link-btn"
+                      onClick={() => setCreandoProductoNuevo(false)}
+                    >
+                      cancelar
+                    </button>
+                  )}
                 </div>
                 <div className="form-grid">
                   <Campo label="Nombre / descripción del producto">
-                    <input value={nombreNuevo} onChange={(e) => setNombreNuevo(e.target.value)} />
+                    <input value={nombreNuevo} onChange={(e) => setNombreNuevo(e.target.value)} autoFocus={creandoProductoNuevo} />
                   </Campo>
                   <Campo label="Categoría (opcional)">
                     <input value={categoriaNuevo} onChange={(e) => setCategoriaNuevo(e.target.value)} />

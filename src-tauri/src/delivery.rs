@@ -94,6 +94,7 @@ fn a_hora_venezuela(iso_utc: &str) -> String {
 
 #[derive(Debug, Deserialize)]
 struct ProductoParaEmpuje {
+    id: String,
     codigo_barra: String,
     nombre: String,
     costo_actual_usd: f64,
@@ -111,7 +112,7 @@ struct ProductoParaEmpuje {
 async fn sincronizar_catalogo(conn: &libsql::Connection, cfg: &ConfigDelivery) -> Result<usize, String> {
     let mut filas = conn
         .query(
-            "SELECT p.codigo_barra, p.nombre, p.costo_actual_usd, p.margen_porcentaje,
+            "SELECT p.id, p.codigo_barra, p.nombre, p.costo_actual_usd, p.margen_porcentaje,
                     c.nombre as categoria_nombre, p.disponible_delivery
              FROM productos p LEFT JOIN categorias c ON c.id = p.categoria_id
              WHERE p.activo = 1",
@@ -123,12 +124,13 @@ async fn sincronizar_catalogo(conn: &libsql::Connection, cfg: &ConfigDelivery) -
     let mut productos = Vec::new();
     while let Some(fila) = filas.next().await.map_err(|e| e.to_string())? {
         productos.push(ProductoParaEmpuje {
-            codigo_barra: fila.get(0).map_err(|e| e.to_string())?,
-            nombre: fila.get(1).map_err(|e| e.to_string())?,
-            costo_actual_usd: fila.get(2).map_err(|e| e.to_string())?,
-            margen_porcentaje: fila.get(3).map_err(|e| e.to_string())?,
-            categoria_nombre: fila.get(4).map_err(|e| e.to_string())?,
-            disponible_delivery: fila.get(5).map_err(|e| e.to_string())?,
+            id: fila.get(0).map_err(|e| e.to_string())?,
+            codigo_barra: fila.get(1).map_err(|e| e.to_string())?,
+            nombre: fila.get(2).map_err(|e| e.to_string())?,
+            costo_actual_usd: fila.get(3).map_err(|e| e.to_string())?,
+            margen_porcentaje: fila.get(4).map_err(|e| e.to_string())?,
+            categoria_nombre: fila.get(5).map_err(|e| e.to_string())?,
+            disponible_delivery: fila.get(6).map_err(|e| e.to_string())?,
         });
     }
 
@@ -140,6 +142,7 @@ async fn sincronizar_catalogo(conn: &libsql::Connection, cfg: &ConfigDelivery) -
         .iter()
         .map(|p| {
             serde_json::json!({
+                "posId": p.id,
                 "codigo": p.codigo_barra,
                 "nombre": p.nombre,
                 "precioUsd": precio_venta_usd(p.costo_actual_usd, p.margen_porcentaje),

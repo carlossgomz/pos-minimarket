@@ -19,6 +19,10 @@ export default function PendientesCodigoBarras({
   const [pendientes, setPendientes] = useState<Producto[]>([]);
   const [cargando, setCargando] = useState(true);
   const [mensaje, setMensaje] = useState<string | null>(null);
+  // Texto tecleado a mano por producto (id -> código) — para poder guardar
+  // con un botón explícito además del atajo de escanear + Enter, ya que
+  // todavía no hay escáner físico en la tienda.
+  const [codigos, setCodigos] = useState<Record<string, string>>({});
 
   async function cargar() {
     const db = await getDb();
@@ -44,6 +48,10 @@ export default function PendientesCodigoBarras({
       return;
     }
     setMensaje(null);
+    setCodigos((prev) => {
+      const { [p.id]: _quitado, ...resto } = prev;
+      return resto;
+    });
     await cargar();
     onCambio();
   }
@@ -58,9 +66,9 @@ export default function PendientesCodigoBarras({
           </button>
         </div>
         <p className="hint" style={{ marginTop: 0 }}>
-          Se crearon desde una factura de compra y todavía no tienen código de barras real — haz
-          clic en la casilla de cada uno y escanea el código de la caja física, se asigna solo.
-          Esta ventana se puede volver a abrir cuando quieras desde el aviso de arriba.
+          Se crearon desde una factura de compra y todavía no tienen código de barras real. Si
+          tienes escáner, haz clic en la casilla y escanea (se asigna solo al terminar). Si no,
+          escribe el código a mano y presiona "Guardar".
         </p>
         {mensaje && <p className="error">{mensaje}</p>}
         {cargando ? (
@@ -75,7 +83,8 @@ export default function PendientesCodigoBarras({
                   <th>Nombre</th>
                   <th>Código del proveedor</th>
                   <th>Stock</th>
-                  <th>Escanear código de barras</th>
+                  <th>Código de barras (escanear o escribir)</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
@@ -88,14 +97,21 @@ export default function PendientesCodigoBarras({
                       <input
                         className="cant-input"
                         style={{ width: 180 }}
-                        placeholder="Escanea aquí…"
+                        placeholder="Escanea o escribe aquí…"
                         autoFocus={i === 0}
+                        value={codigos[p.id] ?? ""}
+                        onChange={(e) => setCodigos((prev) => ({ ...prev, [p.id]: e.target.value }))}
                         onKeyDown={(e) => {
                           if (e.key !== "Enter") return;
                           e.preventDefault();
                           asignar(p, e.currentTarget.value);
                         }}
                       />
+                    </td>
+                    <td>
+                      <button type="button" onClick={() => asignar(p, codigos[p.id] ?? "")}>
+                        Guardar
+                      </button>
                     </td>
                   </tr>
                 ))}

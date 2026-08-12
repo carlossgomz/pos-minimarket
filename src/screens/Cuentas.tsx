@@ -12,6 +12,7 @@ import {
   VentaCredito,
 } from "../types";
 import EditorItemsVenta from "./EditorItemsVenta";
+import { normalizarTexto, sqlSinAcentos } from "../busqueda";
 
 const EPS = 0.01;
 
@@ -595,8 +596,243 @@ function CuentasPorPagar({ config }: { config: ConfigRow }) {
   );
 }
 
+type FacturaCompraPagada = {
+  id: string;
+  numero_factura: string;
+  fecha: string;
+  proveedor_nombre: string;
+  moneda: string;
+  tasa_cambio_dia: number;
+  monto_total_usd: number;
+  ultimo_pago: string | null;
+};
+
+type ItemFacturaCompraDetalle = {
+  producto_nombre: string;
+  cantidad: number;
+  costo_unitario_usd: number;
+};
+
+type PagoProveedorDetalle = {
+  monto_usd: number;
+  monto_bs: number;
+  metodo: string;
+  referencia: string | null;
+  created_at: string;
+};
+
+// Historial de facturas de proveedor YA pagadas por completo — separado de
+// "Por pagar" (que solo lista las pendientes), para poder revisar y
+// reimprimir lo que ya se saldó sin mezclarlo con la deuda actual.
+function FacturasPagadas() {
+  const [facturas, setFacturas] = useState<FacturaCompraPagada[]>([]);
+  const [busqueda, setBusqueda] = useState("");
+  const [detalleAbierto, setDetalleAbierto] = useState<string | null>(null);
+  const [items, setItems] = useState<ItemFacturaCompraDetalle[]>([]);
+  const [pagos, setPagos] = useState<PagoProveedorDetalle[]>([]);
+
+  async function cargar() {
+    const db = await getDb();
+    const term = busqueda.trim();
+    const rows = await db.select<FacturaCompraPagada[]>(
+      `SELECT fc.id, fc.numero_factura, fc.fecha, pr.nombre as proveedor_nombre, fc.moneda,
+              fc.tasa_cambio_dia, fc.monto_total_usd,
+              (SELECT MAX(pp.created_at) FROM pagos_proveedor pp WHERE pp.factura_compra_id = fc.id) as ultimo_pago
+       FROM facturas_compra fc JOIN proveedores pr ON pr.id = fc.proveedor_id
+       WHERE fc.estado = 'PAGADA' AND (${sqlSinAcentos("pr.nombre")} LIKE $1 OR fc.numero_factura LIKE $2)
+       ORDER BY fc.fecha DESC LIMIT 200`,
+      [`%${normalizarTexto(term)}%`, `%${term}%`]
+    );
+    setFacturas(rows);
+  }
+
+  useEffect(() => {
+    const timer = setTimeout(cargar, 250);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busqueda]);
+
+  async function toggleDetalle(f: FacturaCompraPagada) {
+    if (detalleAbierto === f.id) {
+      setDetalleAbierto(null);
+      setItems([]);
+      setPagos([]);
+      return;
+    }
+    setDetalleAbierto(f.id);
+    const db = await getDb();
+    const itemsRows = await db.select<ItemFacturaCompraDetalle[]>(
+      `SELECT p.nombre as producto_nombre, i.cantidad, i.costo_unitario_usd
+       FROM items_factura_compra i JOIN productos p ON p.id = i.producto_id
+       WHERE i.factura_compra_id = $1`,
+      [f.id]
+    );
+    setItems(itemsRows);
+    const pagosRows = await db.select<PagoProveedorDetalle[]>(
+      `SELECT monto_usd, monto_bs, metodo, referencia, created_at
+       FROM pagos_proveedor WHERE factura_compra_id = $1 ORDER BY created_at`,
+      [f.id]
+    );
+    setPagos(pagosRows);
+  }
+
+  return (
+    <div className="card">
+      <div className="form-row" style={{ alignItems: "center", justifyContent: "space-between" }}>
+        <h2 style={{ margin: 0 }}>Facturas de proveedor ya pagadas</h2>
+        <button type="button" className="no-print" onClick={() => window.print()}>
+          Imprimir
+        </button>
+      </div>
+      <input
+        placeholder="Buscar por proveedor o número de factura"
+        value={busqueda}
+        onChange={(e) => setBusqueda(e.target.value)}
+        style={{ marginBottom: 10, width: "100%", padding: "8px 10px", border: "1px solid #b4b2a9", borderRadius: 6 }}
+      />
+      <div style={{ overflowX: "auto" }}>
+        <table>
+          <thead>
+            <tr>
+              <th>Factura</th>
+              <th>Proveedor</th>
+              <th>Fecha</th>
+              <th>Moneda</th>
+              <th>Total USD</th>
+              <th>Total Bs</th>
+              <th>Último pago</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {facturas.map((f) => (
+              <Fragment key={f.id}>
+                <tr>
+                  <td>{f.numero_factura}</td>
+                  <td>{f.proveedor_nombre}</td>
+                  <td>{new Date(f.fecha).toLocaleDateString("es-VE")}</td>
+                  <td>{f.moneda}</td>
+                  <td>{f.monto_total_usd.toFixed(2)}</td>
+                  <td>{(f.monto_total_usd * f.tasa_cambio_dia).toFixed(2)}</td>
+                  <td>{f.ultimo_pago ? new Date(f.ultimo_pago).toLocaleDateString("es-VE") : "—"}</td>
+                  <td>
+                    <button className="link-btn" onClick={() => toggleDetalle(f)}>
+                      {detalleAbierto === f.id ? "ocultar detalle" : "ver detalle"}
+                    </button>
+                  </td>
+                </tr>
+                {detalleAbierto === f.id && (
+                  <tr>
+                    <td colSpan={8}>
+                      <p className="hint" style={{ marginTop: 0 }}>
+                        Productos de la factura
+                      </p>
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>Producto</th>
+                            <th>Cantidad</th>
+                            <th>Costo unit. USD</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {items.map((it, i) => (
+                            <tr key={i}>
+                              <td>{it.producto_nombre}</td>
+                              <td>{it.cantidad}</td>
+                              <td>{it.costo_unitario_usd.toFixed(4)}</td>
+                            </tr>
+                          ))}
+                          {items.length === 0 && (
+                            <tr>
+                              <td colSpan={3} className="empty">
+                                Sin ítems.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                      <p className="hint">Pagos realizados</p>
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>Fecha</th>
+                            <th>Método</th>
+                            <th>Monto USD</th>
+                            <th>Monto Bs</th>
+                            <th>Referencia</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {pagos.map((p, i) => (
+                            <tr key={i}>
+                              <td>{new Date(p.created_at).toLocaleDateString("es-VE")}</td>
+                              <td>{p.metodo.split("_").join(" ")}</td>
+                              <td>{p.monto_usd.toFixed(2)}</td>
+                              <td>{p.monto_bs.toFixed(2)}</td>
+                              <td>{p.referencia ?? "—"}</td>
+                            </tr>
+                          ))}
+                          {pagos.length === 0 && (
+                            <tr>
+                              <td colSpan={5} className="empty">
+                                Sin pagos registrados.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            ))}
+            {facturas.length === 0 && (
+              <tr>
+                <td colSpan={8} className="empty">
+                  No hay facturas de proveedor pagadas todavía.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Solo aparece al imprimir — listado simple para archivo/revisión. */}
+      <div className="imprimible">
+        <h2>Facturas de proveedor pagadas</h2>
+        <p>Impreso el {new Date().toLocaleString("es-VE")}</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Factura</th>
+              <th>Proveedor</th>
+              <th>Fecha</th>
+              <th>Total USD</th>
+              <th>Total Bs</th>
+              <th>Último pago</th>
+            </tr>
+          </thead>
+          <tbody>
+            {facturas.map((f) => (
+              <tr key={f.id}>
+                <td>{f.numero_factura}</td>
+                <td>{f.proveedor_nombre}</td>
+                <td>{new Date(f.fecha).toLocaleDateString("es-VE")}</td>
+                <td>{f.monto_total_usd.toFixed(2)}</td>
+                <td>{(f.monto_total_usd * f.tasa_cambio_dia).toFixed(2)}</td>
+                <td>{f.ultimo_pago ? new Date(f.ultimo_pago).toLocaleDateString("es-VE") : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export default function Cuentas({ config, esAdmin }: { config: ConfigRow; esAdmin: boolean }) {
-  const [sub, setSub] = useState<"cobrar" | "pagar">("cobrar");
+  const [sub, setSub] = useState<"cobrar" | "pagar" | "pagadas">("cobrar");
 
   // El cajero solo ve las cuentas por cobrar de clientes — lo que se le
   // debe a los proveedores es información administrativa/financiera del
@@ -607,15 +843,20 @@ export default function Cuentas({ config, esAdmin }: { config: ConfigRow; esAdmi
 
   return (
     <div>
-      <div className="tabs" style={{ marginBottom: 16 }}>
+      <div className="tabs no-print" style={{ marginBottom: 16 }}>
         <button className={sub === "cobrar" ? "tab-activo" : ""} onClick={() => setSub("cobrar")}>
           Por cobrar (clientes)
         </button>
         <button className={sub === "pagar" ? "tab-activo" : ""} onClick={() => setSub("pagar")}>
           Por pagar (proveedores)
         </button>
+        <button className={sub === "pagadas" ? "tab-activo" : ""} onClick={() => setSub("pagadas")}>
+          Pagadas (proveedores)
+        </button>
       </div>
-      {sub === "cobrar" ? <CuentasPorCobrar config={config} esAdmin={esAdmin} /> : <CuentasPorPagar config={config} />}
+      {sub === "cobrar" && <CuentasPorCobrar config={config} esAdmin={esAdmin} />}
+      {sub === "pagar" && <CuentasPorPagar config={config} />}
+      {sub === "pagadas" && <FacturasPagadas />}
     </div>
   );
 }

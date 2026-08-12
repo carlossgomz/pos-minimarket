@@ -22,7 +22,6 @@ function armarFilas(esperados: Record<string, number>, contadosGuardados: Record
 export default function CuadreCaja() {
   const [fecha, setFecha] = useState(hoyISO());
   const [ingresos, setIngresos] = useState<Fila[]>([]);
-  const [egresos, setEgresos] = useState<Fila[]>([]);
   // Puramente informativo — de dónde sale el número de EFECTIVO en
   // "ingresos" (ver más abajo por qué se resta ahí y no en una tarjeta
   // aparte). No tiene "contado" propio: la caja física es una sola, no
@@ -94,29 +93,14 @@ export default function CuadreCaja() {
     setAporteCapitalExterno(aporteCapitalExterno);
     setAvanceEfectivo(avanceEfectivo);
 
-    const porPagoProveedor = await db.select<{ metodo: string | null; monto: number }[]>(
-      `SELECT metodo, SUM(monto_bs) as monto FROM pagos_proveedor WHERE date(created_at) = $1 GROUP BY metodo`,
-      [fecha]
-    );
-    const esperadosEgreso: Record<string, number> = {};
-    for (const r of porPagoProveedor) {
-      const m = r.metodo ?? "SIN_ESPECIFICAR";
-      esperadosEgreso[m] = (esperadosEgreso[m] ?? 0) + r.monto;
-    }
-
     const guardados = await db.select<{ tipo: string; metodo: string; monto_contado_bs: number }[]>(
-      `SELECT tipo, metodo, monto_contado_bs FROM cierres_caja WHERE fecha = $1`,
+      `SELECT tipo, metodo, monto_contado_bs FROM cierres_caja WHERE fecha = $1 AND tipo = 'INGRESO'`,
       [fecha]
     );
     const contadosIngreso: Record<string, number> = {};
-    const contadosEgreso: Record<string, number> = {};
-    for (const g of guardados) {
-      if (g.tipo === "INGRESO") contadosIngreso[g.metodo] = g.monto_contado_bs;
-      else if (g.tipo !== "AVANCE") contadosEgreso[g.metodo] = g.monto_contado_bs;
-    }
+    for (const g of guardados) contadosIngreso[g.metodo] = g.monto_contado_bs;
 
     setIngresos(armarFilas(esperadosIngreso, contadosIngreso));
-    setEgresos(armarFilas(esperadosEgreso, contadosEgreso));
   }
 
   useEffect(() => {
@@ -124,9 +108,8 @@ export default function CuadreCaja() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fecha]);
 
-  function actualizarContado(lista: "ingresos" | "egresos", metodo: string, valor: string) {
-    const setter = lista === "ingresos" ? setIngresos : setEgresos;
-    setter((prev) => prev.map((f) => (f.metodo === metodo ? { ...f, contado: valor } : f)));
+  function actualizarContado(metodo: string, valor: string) {
+    setIngresos((prev) => prev.map((f) => (f.metodo === metodo ? { ...f, contado: valor } : f)));
     setGuardado(false);
   }
 
@@ -142,23 +125,18 @@ export default function CuadreCaja() {
       // trabado en "Guardando…", el COMMIT fallaba sin transacción activa
       // y el ROLLBACK del catch fallaba también, sin llegar nunca a
       // setGuardando(false)).
-      for (const [tipo, filas] of [
-        ["INGRESO", ingresos],
-        ["EGRESO", egresos],
-      ] as const) {
-        for (const f of filas) {
-          const contado = Number(f.contado || "0");
-          const diferencia = contado - f.esperado;
-          await db.execute(
-            `INSERT INTO cierres_caja (id, fecha, tipo, metodo, monto_esperado_bs, monto_contado_bs, diferencia_bs)
-             VALUES ($1,$2,$3,$4,$5,$6,$7)
-             ON CONFLICT(fecha, tipo, metodo) DO UPDATE SET
-               monto_esperado_bs = excluded.monto_esperado_bs,
-               monto_contado_bs = excluded.monto_contado_bs,
-               diferencia_bs = excluded.diferencia_bs`,
-            [crypto.randomUUID(), fecha, tipo, f.metodo, f.esperado, contado, diferencia]
-          );
-        }
+      for (const f of ingresos) {
+        const contado = Number(f.contado || "0");
+        const diferencia = contado - f.esperado;
+        await db.execute(
+          `INSERT INTO cierres_caja (id, fecha, tipo, metodo, monto_esperado_bs, monto_contado_bs, diferencia_bs)
+           VALUES ($1,$2,'INGRESO',$3,$4,$5,$6)
+           ON CONFLICT(fecha, tipo, metodo) DO UPDATE SET
+             monto_esperado_bs = excluded.monto_esperado_bs,
+             monto_contado_bs = excluded.monto_contado_bs,
+             diferencia_bs = excluded.diferencia_bs`,
+          [crypto.randomUUID(), fecha, f.metodo, f.esperado, contado, diferencia]
+        );
       }
     } catch (e) {
       setMensaje(`No se pudo guardar el cierre: ${String(e)}`);
@@ -171,13 +149,8 @@ export default function CuadreCaja() {
 
   const totalIngresoEsperado = ingresos.reduce((a, f) => a + f.esperado, 0);
   const totalIngresoContado = ingresos.reduce((a, f) => a + Number(f.contado || "0"), 0);
-  const totalEgresoEsperado = egresos.reduce((a, f) => a + f.esperado, 0);
-  const totalEgresoContado = egresos.reduce((a, f) => a + Number(f.contado || "0"), 0);
 
-  function tablaFilas(
-    filas: Fila[],
-    lista: "ingresos" | "egresos"
-  ) {
+  function tablaFilas(filas: Fila[]) {
     return (
       <table>
         <thead>
@@ -203,7 +176,7 @@ export default function CuadreCaja() {
                     type="number"
                     step="0.01"
                     value={f.contado}
-                    onChange={(e) => actualizarContado(lista, f.metodo, e.target.value)}
+                    onChange={(e) => actualizarContado(f.metodo, e.target.value)}
                     placeholder="0.00"
                   />
                 </td>
@@ -234,39 +207,28 @@ export default function CuadreCaja() {
         </div>
       </div>
 
-      <div className="venta-layout">
-        <div className="card">
-          <h2>Ingresos (ventas y abonos de crédito)</h2>
-          {(aporteCapitalExterno > 0 || avanceEfectivo > 0) && (
-            <p className="hint">
-              El renglón de EFECTIVO ya incluye los avances del día: +Bs {aporteCapitalExterno.toFixed(2)}{" "}
-              de aportes de capital externo (entra a la caja) − Bs {avanceEfectivo.toFixed(2)} entregados
-              en avances (sale de la caja). Lo cobrado a cambio de cada avance (por otro método) está
-              sumado en su propia fila más abajo.
-            </p>
-          )}
-          {tablaFilas(ingresos, "ingresos")}
-          <div className="totales">
-            <span>Esperado: Bs {totalIngresoEsperado.toFixed(2)}</span>
-            <strong>Contado: Bs {totalIngresoContado.toFixed(2)}</strong>
-          </div>
-        </div>
-
-        <div className="card">
-          <h2>Egresos (pagos a proveedores)</h2>
-          {tablaFilas(egresos, "egresos")}
-          <div className="totales">
-            <span>Esperado: Bs {totalEgresoEsperado.toFixed(2)}</span>
-            <strong>Contado: Bs {totalEgresoContado.toFixed(2)}</strong>
-          </div>
+      <div className="card">
+        <h2>Ingresos (ventas y abonos de crédito)</h2>
+        <p className="hint">
+          Los pagos a proveedores no entran acá — es un flujo aparte del efectivo/pagos de la
+          tienda (ver Cuentas → Por pagar).
+        </p>
+        {(aporteCapitalExterno > 0 || avanceEfectivo > 0) && (
+          <p className="hint">
+            El renglón de EFECTIVO ya incluye los avances del día: +Bs {aporteCapitalExterno.toFixed(2)}{" "}
+            de aportes de capital externo (entra a la caja) − Bs {avanceEfectivo.toFixed(2)} entregados
+            en avances (sale de la caja). Lo cobrado a cambio de cada avance (por otro método) está
+            sumado en su propia fila más abajo.
+          </p>
+        )}
+        {tablaFilas(ingresos)}
+        <div className="totales">
+          <span>Esperado: Bs {totalIngresoEsperado.toFixed(2)}</span>
+          <strong>Contado: Bs {totalIngresoContado.toFixed(2)}</strong>
         </div>
       </div>
 
       <div className="card">
-        <div className="totales">
-          <span>Neto esperado: Bs {(totalIngresoEsperado - totalEgresoEsperado).toFixed(2)}</span>
-          <strong>Neto contado: Bs {(totalIngresoContado - totalEgresoContado).toFixed(2)}</strong>
-        </div>
         {mensaje && (
           <p className="error" style={{ marginTop: 10 }}>
             {mensaje}

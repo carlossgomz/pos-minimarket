@@ -14,6 +14,10 @@ type ProductoConMovimientos = ProductoInventario & {
   salidas_totales: number;
 };
 
+// Valor especial para el filtro de categoría — distinto de "" (que
+// significa "todas") y de cualquier id real de categoria.
+const SIN_CATEGORIA = "__SIN_CATEGORIA__";
+
 export default function Inventario({
   config,
   soloProblemasInicial,
@@ -97,7 +101,9 @@ export default function Inventario({
     if (soloProblemas) {
       base = base.filter((p) => estadoStock(p) === "agotado" || estadoStock(p) === "critico");
     }
-    if (categoriaFiltro) {
+    if (categoriaFiltro === SIN_CATEGORIA) {
+      base = base.filter((p) => !p.categoria_id);
+    } else if (categoriaFiltro) {
       base = base.filter((p) => p.categoria_id === categoriaFiltro);
     }
     return base;
@@ -329,6 +335,7 @@ export default function Inventario({
             />
             <select value={categoriaFiltro} onChange={(e) => setCategoriaFiltro(e.target.value)}>
               <option value="">Todas las categorías</option>
+              <option value={SIN_CATEGORIA}>Sin categoría</option>
               {categorias.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.nombre}

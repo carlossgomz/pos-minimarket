@@ -1,6 +1,7 @@
 mod comandos;
 mod db;
 mod delivery;
+mod fecha;
 mod ia;
 mod offline;
 

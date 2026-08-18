@@ -8,6 +8,7 @@ use tauri::Manager;
 use uuid::Uuid;
 
 use crate::db::{self, EstadoBaseDatos};
+use crate::fecha::ahora_venezuela;
 
 async fn conexion(app: &tauri::AppHandle) -> Result<libsql::Connection, String> {
     let estado = app.state::<EstadoBaseDatos>();
@@ -229,6 +230,13 @@ pub struct ConfirmarVentaInput {
     /// Order.importadoPos del lado de la delivery-app).
     #[serde(default)]
     pub pedido_delivery_id: Option<String>,
+    /// Quién entregó esta venta cuando canal = "DELIVERY" (ver tabla
+    /// repartidores) — para calcular su comisión ($0.10/producto, ver
+    /// Cuentas → Comisiones de delivery). Las importadas desde la app
+    /// llegan sin esto (la app todavía no lo captura); se asigna después
+    /// desde Facturas.
+    #[serde(default)]
+    pub repartidor_id: Option<String>,
     pub items: Vec<ItemVentaInput>,
     pub pagos: Vec<PagoVentaInput>,
 }
@@ -292,8 +300,8 @@ pub(crate) async fn confirmar_venta_interna(
     let numero_ticket = format!("{prefijo}-{numero:06}");
 
     tx.execute(
-        "INSERT INTO ventas (id, numero_ticket, fecha_hora, cliente_nombre, cliente_cedula, cliente_direccion, vendedor_id, vendedor_nombre, tasa_cambio_dia, subtotal_bs, iva_bs, total_bs, estado, monto_pendiente_usd, canal, pedido_delivery_id)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
+        "INSERT INTO ventas (id, numero_ticket, fecha_hora, cliente_nombre, cliente_cedula, cliente_direccion, vendedor_id, vendedor_nombre, tasa_cambio_dia, subtotal_bs, iva_bs, total_bs, estado, monto_pendiente_usd, canal, pedido_delivery_id, repartidor_id)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
         libsql::params![
             input.id.clone(),
             numero_ticket.clone(),
@@ -311,6 +319,7 @@ pub(crate) async fn confirmar_venta_interna(
             input.monto_pendiente_usd,
             input.canal.clone(),
             input.pedido_delivery_id.clone(),
+            input.repartidor_id.clone(),
         ],
     )
     .await
@@ -336,11 +345,11 @@ pub(crate) async fn confirmar_venta_interna(
         .await
         .map_err(|e| e.to_string())?;
 
+        // Vender/consumir hasta agotar el stock ya no desactiva el producto
+        // solo — se puede seguir buscando y vendiendo aunque quede en 0 (o
+        // negativo). Un producto solo se desactiva a mano, desde Inventario.
         tx.execute(
-            "UPDATE productos
-             SET stock_actual = stock_actual - ?1,
-                 activo = CASE WHEN stock_actual - ?1 <= 0 THEN 0 ELSE activo END
-             WHERE id = ?2",
+            "UPDATE productos SET stock_actual = stock_actual - ?1 WHERE id = ?2",
             libsql::params![item.cantidad, item.producto_id.clone()],
         )
         .await
@@ -437,7 +446,7 @@ pub async fn editar_venta_items(
 
     let fila = tx
         .query(
-            "SELECT total_bs, iva_bs, tasa_cambio_dia, monto_pendiente_usd, canal FROM ventas WHERE id = ?1",
+            "SELECT total_bs, iva_bs, tasa_cambio_dia, monto_pendiente_usd, pedido_delivery_id FROM ventas WHERE id = ?1",
             libsql::params![venta_id.clone()],
         )
         .await
@@ -450,12 +459,16 @@ pub async fn editar_venta_items(
     let iva_bs: f64 = fila.get(1).map_err(|e| e.to_string())?;
     let tasa: f64 = fila.get(2).map_err(|e| e.to_string())?;
     let pendiente_anterior: Option<f64> = fila.get(3).map_err(|e| e.to_string())?;
-    let canal: String = fila.get(4).map_err(|e| e.to_string())?;
+    let pedido_delivery_id: Option<String> = fila.get(4).map_err(|e| e.to_string())?;
     drop(fila);
 
-    if canal == "DELIVERY" {
+    // El bloqueo es solo para ventas IMPORTADAS de un pedido de la app
+    // (pedido_delivery_id presente) — las de delivery por WhatsApp, cargadas
+    // a mano acá mismo con el check "Es delivery" de Venta.tsx, se editan
+    // igual que cualquier otra venta de mostrador.
+    if pedido_delivery_id.is_some() {
         return Err(
-            "Esta venta vino de un pedido de delivery — no se puede editar acá, hay que corregirla desde el pedido original.".to_string(),
+            "Esta venta vino de un pedido de la app de delivery — no se puede editar acá, hay que corregirla desde el pedido original.".to_string(),
         );
     }
 
@@ -520,8 +533,8 @@ pub async fn editar_venta_items(
         let tipo = if *delta > 0.0 { "ENTRADA" } else { "SALIDA" };
         tx.execute(
             "INSERT INTO movimientos_inventario (id, producto_id, tipo, cantidad, motivo, referencia, created_at)
-             VALUES (lower(hex(randomblob(16))), ?1, ?2, ?3, 'Corrección de productos de una venta (admin)', ?4, datetime('now'))",
-            libsql::params![producto_id.clone(), tipo, delta.abs(), venta_id.clone()],
+             VALUES (lower(hex(randomblob(16))), ?1, ?2, ?3, 'Corrección de productos de una venta (admin)', ?4, ?5)",
+            libsql::params![producto_id.clone(), tipo, delta.abs(), venta_id.clone(), ahora_venezuela()],
         )
         .await
         .map_err(|e| e.to_string())?;
@@ -575,19 +588,21 @@ pub async fn eliminar_venta(app: tauri::AppHandle, venta_id: String) -> Result<(
     let tx = conn.transaction().await.map_err(|e| e.to_string())?;
 
     let fila = tx
-        .query("SELECT canal FROM ventas WHERE id = ?1", libsql::params![venta_id.clone()])
+        .query("SELECT pedido_delivery_id FROM ventas WHERE id = ?1", libsql::params![venta_id.clone()])
         .await
         .map_err(|e| e.to_string())?
         .next()
         .await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "La venta no existe.".to_string())?;
-    let canal: String = fila.get(0).map_err(|e| e.to_string())?;
+    let pedido_delivery_id: Option<String> = fila.get(0).map_err(|e| e.to_string())?;
     drop(fila);
 
-    if canal == "DELIVERY" {
+    // Mismo criterio que en editar_venta_items: solo se bloquean las
+    // importadas de la app (pedido_delivery_id presente).
+    if pedido_delivery_id.is_some() {
         return Err(
-            "Esta venta vino de un pedido de delivery — no se puede eliminar acá, hay que corregirla desde el pedido original."
+            "Esta venta vino de un pedido de la app de delivery — no se puede eliminar acá, hay que corregirla desde el pedido original."
                 .to_string(),
         );
     }
@@ -680,14 +695,7 @@ async fn ajustar_stock_interna(conn: &libsql::Connection, input: &AjustarStockIn
     }
 
     tx.execute(
-        "UPDATE productos
-         SET stock_actual = stock_actual + ?1,
-             activo = CASE
-               WHEN stock_actual + ?1 <= 0 THEN 0
-               WHEN ?1 > 0 THEN 1
-               ELSE activo
-             END
-         WHERE id = ?2",
+        "UPDATE productos SET stock_actual = stock_actual + ?1 WHERE id = ?2",
         libsql::params![delta, input.producto_id.clone()],
     )
     .await
@@ -803,10 +811,7 @@ async fn desglosar_producto_interna(conn: &libsql::Connection, input: &Desglosar
         .map_err(|e| e.to_string())?;
 
     tx.execute(
-        "UPDATE productos
-         SET stock_actual = stock_actual - ?1,
-             activo = CASE WHEN stock_actual - ?1 <= 0 THEN 0 ELSE activo END
-         WHERE id = ?2",
+        "UPDATE productos SET stock_actual = stock_actual - ?1 WHERE id = ?2",
         libsql::params![input.cantidad_origen, input.producto_origen_id.clone()],
     )
     .await
@@ -975,9 +980,16 @@ pub async fn registrar_abono_cliente(app: tauri::AppHandle, input: AbonoClienteI
     let nuevo_pendiente = (pendiente - input.monto_usd).max(0.0);
 
     tx.execute(
-        "INSERT INTO cobros_cliente (id, venta_id, monto_usd, tasa_cambio_dia, monto_bs, metodo)
-         VALUES (lower(hex(randomblob(16))), ?1, ?2, ?3, ?4, ?5)",
-        libsql::params![input.venta_id.clone(), input.monto_usd, input.tasa_cambio_dia, input.monto_bs, input.metodo.clone()],
+        "INSERT INTO cobros_cliente (id, venta_id, monto_usd, tasa_cambio_dia, monto_bs, metodo, created_at)
+         VALUES (lower(hex(randomblob(16))), ?1, ?2, ?3, ?4, ?5, ?6)",
+        libsql::params![
+            input.venta_id.clone(),
+            input.monto_usd,
+            input.tasa_cambio_dia,
+            input.monto_bs,
+            input.metodo.clone(),
+            ahora_venezuela()
+        ],
     )
     .await
     .map_err(|e| e.to_string())?;
@@ -1062,14 +1074,15 @@ pub async fn registrar_abono_cliente_total(
         let nuevo_pendiente = (pendiente - aplicado).max(0.0);
 
         tx.execute(
-            "INSERT INTO cobros_cliente (id, venta_id, monto_usd, tasa_cambio_dia, monto_bs, metodo)
-             VALUES (lower(hex(randomblob(16))), ?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO cobros_cliente (id, venta_id, monto_usd, tasa_cambio_dia, monto_bs, metodo, created_at)
+             VALUES (lower(hex(randomblob(16))), ?1, ?2, ?3, ?4, ?5, ?6)",
             libsql::params![
                 venta_id.clone(),
                 aplicado,
                 input.tasa_cambio_dia,
                 aplicado * input.tasa_cambio_dia,
                 input.metodo.clone(),
+                ahora_venezuela(),
             ],
         )
         .await
@@ -1141,8 +1154,8 @@ pub async fn registrar_pago_proveedor(app: tauri::AppHandle, input: PagoProveedo
     let saldada = total - nuevo_pagado <= EPS;
 
     tx.execute(
-        "INSERT INTO pagos_proveedor (id, factura_compra_id, monto_usd, tasa_cambio_dia, monto_bs, metodo, referencia)
-         VALUES (lower(hex(randomblob(16))), ?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO pagos_proveedor (id, factura_compra_id, monto_usd, tasa_cambio_dia, monto_bs, metodo, referencia, created_at)
+         VALUES (lower(hex(randomblob(16))), ?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         libsql::params![
             input.factura_compra_id.clone(),
             input.monto_usd,
@@ -1150,6 +1163,7 @@ pub async fn registrar_pago_proveedor(app: tauri::AppHandle, input: PagoProveedo
             input.monto_bs,
             input.metodo.clone(),
             input.referencia.clone(),
+            ahora_venezuela(),
         ],
     )
     .await
@@ -1207,11 +1221,11 @@ async fn registrar_consumo_interno_interna(
         let motivo = item.motivo.trim();
         let motivo = if motivo.is_empty() { "Consumo interno" } else { motivo };
 
+        // Vender/consumir hasta agotar el stock ya no desactiva el producto
+        // solo — se puede seguir buscando y vendiendo aunque quede en 0 (o
+        // negativo). Un producto solo se desactiva a mano, desde Inventario.
         tx.execute(
-            "UPDATE productos
-             SET stock_actual = stock_actual - ?1,
-                 activo = CASE WHEN stock_actual - ?1 <= 0 THEN 0 ELSE activo END
-             WHERE id = ?2",
+            "UPDATE productos SET stock_actual = stock_actual - ?1 WHERE id = ?2",
             libsql::params![item.cantidad, item.producto_id.clone()],
         )
         .await

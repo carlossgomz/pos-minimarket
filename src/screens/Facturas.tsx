@@ -9,6 +9,7 @@ import {
   FacturaVentaPagoDetalle,
   FacturaVentaResumen,
   METODOS_PAGO,
+  Repartidor,
 } from "../types";
 import { normalizarTexto, sqlSinAcentos } from "../busqueda";
 import { fechaHoraVenezuela } from "../fecha";
@@ -30,6 +31,7 @@ export default function Facturas({ config, esAdmin }: { config: ConfigRow; esAdm
   const [hasta, setHasta] = useState(hoyISO());
   const [busqueda, setBusqueda] = useState("");
   const [metodoFiltro, setMetodoFiltro] = useState("");
+  const [canalFiltro, setCanalFiltro] = useState<"" | "TIENDA" | "DELIVERY">("");
   const [facturas, setFacturas] = useState<FacturaVentaResumen[]>([]);
 
   const [seleccionada, setSeleccionada] = useState<FacturaVentaCompleta | null>(null);
@@ -38,23 +40,38 @@ export default function Facturas({ config, esAdmin }: { config: ConfigRow; esAdm
   const [pagos, setPagos] = useState<FacturaVentaPagoDetalle[]>([]);
   const [editandoItems, setEditandoItems] = useState(false);
   const [mensajeEliminar, setMensajeEliminar] = useState<string | null>(null);
+  const [repartidores, setRepartidores] = useState<Repartidor[]>([]);
+
+  useEffect(() => {
+    (async () => {
+      const db = await getDb();
+      setRepartidores(await db.select<Repartidor[]>("SELECT * FROM repartidores WHERE activo = 1 ORDER BY nombre"));
+    })();
+  }, []);
 
   async function cargarLista() {
     const db = await getDb();
     const termCrudo = busqueda.trim();
     const term = termCrudo ? `%${termCrudo}%` : "%";
     const termSinAcentos = termCrudo ? `%${normalizarTexto(termCrudo)}%` : "%";
-    const filtroMetodo = metodoFiltro
-      ? "AND id IN (SELECT venta_id FROM pagos WHERE metodo = $5)"
-      : "";
     const params: (string | number)[] = [desde, hasta, term, termSinAcentos];
-    if (metodoFiltro) params.push(metodoFiltro);
+    let filtroMetodo = "";
+    if (metodoFiltro) {
+      params.push(metodoFiltro);
+      filtroMetodo = `AND id IN (SELECT venta_id FROM pagos WHERE metodo = $${params.length})`;
+    }
+    let filtroCanal = "";
+    if (canalFiltro) {
+      params.push(canalFiltro);
+      filtroCanal = `AND canal = $${params.length}`;
+    }
     const rows = await db.select<FacturaVentaResumen[]>(
-      `SELECT id, numero_ticket, fecha_hora, cliente_nombre, cliente_cedula, vendedor_nombre, total_bs, estado, canal
+      `SELECT id, numero_ticket, fecha_hora, cliente_nombre, cliente_cedula, vendedor_nombre, total_bs, estado, canal, repartidor_id
        FROM ventas
        WHERE date(fecha_hora) BETWEEN $1 AND $2
          AND (numero_ticket LIKE $3 OR ${sqlSinAcentos("cliente_nombre")} LIKE $4 OR cliente_cedula LIKE $3)
          ${filtroMetodo}
+         ${filtroCanal}
        ORDER BY fecha_hora DESC
        LIMIT 200`,
       params
@@ -67,13 +84,13 @@ export default function Facturas({ config, esAdmin }: { config: ConfigRow; esAdm
     const timer = setTimeout(cargarLista, 250);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [desde, hasta, busqueda, metodoFiltro]);
+  }, [desde, hasta, busqueda, metodoFiltro, canalFiltro]);
 
   async function abrirFactura(id: string) {
     const db = await getDb();
     const completa = await db.select<FacturaVentaCompleta[]>(
       `SELECT id, numero_ticket, fecha_hora, cliente_nombre, cliente_cedula, cliente_direccion, vendedor_nombre,
-              tasa_cambio_dia, subtotal_bs, iva_bs, total_bs, estado, monto_pendiente_usd
+              tasa_cambio_dia, subtotal_bs, iva_bs, total_bs, estado, monto_pendiente_usd, canal, repartidor_id
        FROM ventas WHERE id = $1`,
       [id]
     );
@@ -124,6 +141,18 @@ export default function Facturas({ config, esAdmin }: { config: ConfigRow; esAdm
     const db = await getDb();
     await db.execute("UPDATE pagos SET verificado_admin = $1 WHERE id = $2", [verificado ? 1 : 0, pagoId]);
     if (seleccionada) await abrirFactura(seleccionada.id);
+  }
+
+  // Quién entregó esta venta de delivery — se puede asignar/cambiar en
+  // cualquier momento, tanto para las cargadas por WhatsApp (Venta.tsx) como
+  // para las importadas de la app (que llegan sin repartidor, ver
+  // delivery.rs). Solo admin.
+  async function asignarRepartidor(repartidorId: string) {
+    if (!seleccionada) return;
+    const db = await getDb();
+    await db.execute("UPDATE ventas SET repartidor_id = $1 WHERE id = $2", [repartidorId || null, seleccionada.id]);
+    setSeleccionada({ ...seleccionada, repartidor_id: repartidorId || null });
+    await cargarLista();
   }
 
   // Solo admin (ver el filtro esAdmin en el render). Revierte el stock de
@@ -182,6 +211,11 @@ export default function Facturas({ config, esAdmin }: { config: ConfigRow; esAdm
               </option>
             ))}
             <option value="CREDITO">Crédito</option>
+          </select>
+          <select value={canalFiltro} onChange={(e) => setCanalFiltro(e.target.value as "" | "TIENDA" | "DELIVERY")}>
+            <option value="">Tienda y delivery</option>
+            <option value="DELIVERY">Solo delivery</option>
+            <option value="TIENDA">Solo tienda (mostrador)</option>
           </select>
         </div>
 
@@ -253,6 +287,26 @@ export default function Facturas({ config, esAdmin }: { config: ConfigRow; esAdm
               <br />
               Estado: {seleccionada.estado}
             </p>
+            {seleccionada.canal === "DELIVERY" && (
+              <div className="form-row no-print" style={{ alignItems: "center" }}>
+                <span style={{ minWidth: 90 }}>Repartidor:</span>
+                {esAdmin ? (
+                  <select
+                    value={seleccionada.repartidor_id ?? ""}
+                    onChange={(e) => asignarRepartidor(e.target.value)}
+                  >
+                    <option value="">Sin asignar</option>
+                    {repartidores.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.nombre}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <span>{repartidores.find((r) => r.id === seleccionada.repartidor_id)?.nombre ?? "Sin asignar"}</span>
+                )}
+              </div>
+            )}
             <table>
               <thead>
                 <tr>

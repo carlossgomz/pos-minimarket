@@ -14,11 +14,23 @@ import {
   MetodoPago,
   METODOS_PAGO,
   Producto,
+  Repartidor,
   Vendedor,
 } from "../types";
 import logo from "../assets/logo.png";
 
 const MAX_TICKETS_ABIERTOS = 6;
+
+// Recargo de delivery por WhatsApp: $0.10 por cada producto del carrito,
+// para pasarle el precio final al cliente (mismo monto que se le paga de
+// comisión al repartidor, ver Cuentas → Comisiones delivery — deben
+// coincidir siempre). Se guarda como una línea más del carrito contra este
+// producto placeholder (desactivado para que no aparezca en la búsqueda
+// normal — ver Estadisticas.tsx/Cuentas.tsx, que ya lo excluyen de sus
+// conteos por este mismo id), así el total de la venta y el ticket
+// impreso ya lo incluyen solos, sin tocar nada más del resto de la app.
+const COMISION_USD_POR_PRODUCTO = 0.1;
+const PRODUCTO_DELIVERY_ID = "f195fbac-103d-48fa-a27a-28371fba7745";
 
 // Productos que salen del inventario sin ser una venta (mermas, uso
 // propio del negocio, muestras). A diferencia de un ticket, esta lista es
@@ -60,6 +72,12 @@ type TicketAbierto = {
   // se suma al total a cobrar de este ticket. false = "No sumar": la
   // deuda vieja queda intacta, aparte, y esta venta es independiente.
   combinarDeuda: boolean;
+  // Pedido de delivery cargado a mano (por WhatsApp) — reemplaza al viejo
+  // truco de agregar un producto "DELIVERY" a $0.10 x cantidad: con esto
+  // marcado, la venta queda con canal="DELIVERY" y el repartidor elegido,
+  // y la comisión se calcula sola (ver Cuentas → Comisiones de delivery).
+  esDelivery: boolean;
+  repartidorId: string | null;
 };
 
 function ticketVacio(): TicketAbierto {
@@ -76,6 +94,8 @@ function ticketVacio(): TicketAbierto {
     avisoCreditoResuelto: true,
     bloquearCredito: false,
     combinarDeuda: false,
+    esDelivery: false,
+    repartidorId: null,
   };
 }
 
@@ -233,6 +253,15 @@ export default function Venta({
   const [guardandoAporte, setGuardandoAporte] = useState(false);
   const [mensajeAporte, setMensajeAporte] = useState<string | null>(null);
 
+  // --- Repartidores (para marcar una venta como delivery por WhatsApp) ---
+  const [repartidores, setRepartidores] = useState<Repartidor[]>([]);
+  useEffect(() => {
+    (async () => {
+      const db = await getDb();
+      setRepartidores(await db.select<Repartidor[]>("SELECT * FROM repartidores WHERE activo = 1 ORDER BY nombre"));
+    })();
+  }, []);
+
   const [recibo, setRecibo] = useState<null | {
     numero: string;
     fechaHora: string;
@@ -262,7 +291,21 @@ export default function Venta({
     if (visible) inputRef.current?.focus();
   }, [visible]);
 
-  const { subtotal, total } = calcularTotales(activo.carrito, config.tasa_cambio_dia);
+  const { subtotal: subtotalCarrito, total: totalCarrito } = calcularTotales(activo.carrito, config.tasa_cambio_dia);
+  // Cantidad total de productos reales del carrito (para el recargo de
+  // delivery de abajo) — antes de agregar la línea del recargo en sí. Un
+  // producto por peso (ej. 0.2kg) cuenta como 1 producto entero, no como
+  // 0.2 — la comisión/recargo es por PRODUCTO entregado, no por kilo.
+  const totalUnidadesCarrito = activo.carrito.reduce((acc, l) => acc + (l.por_peso ? 1 : l.cantidad), 0);
+  const recargoDeliveryBs = activo.esDelivery
+    ? totalUnidadesCarrito * COMISION_USD_POR_PRODUCTO * config.tasa_cambio_dia
+    : 0;
+  // El subtotal/total de la venta ya incluyen el recargo de delivery (si
+  // aplica) — así todo lo que se calcula a partir de acá (restante a
+  // cobrar, cobro rápido, recibo) lo tiene en cuenta sin tener que tocar
+  // cada lugar por separado.
+  const subtotal = subtotalCarrito + recargoDeliveryBs;
+  const total = totalCarrito + recargoDeliveryBs;
   // Si el cajero eligió combinar la deuda vieja, el total "a cobrar" de
   // este ticket la incluye (convertida a la tasa de HOY, igual criterio
   // que el resto de la app) — pero el total real de la VENTA que se
@@ -724,6 +767,7 @@ export default function Venta({
           es_gravable: p.es_gravable,
           tasa_iva: p.tasa_iva,
           stock_disponible: p.stock_actual,
+          por_peso: p.por_peso,
         },
       ];
     actualizarActivo({ carrito: nuevoCarrito });
@@ -949,6 +993,25 @@ export default function Venta({
     if (!confirmacionVenta || guardando) return;
     const { pagosReales, montoPendienteUsd, esCredito, pagosParaDeuda } = confirmacionVenta;
     const carrito = activo.carrito;
+    // Línea automática del recargo de delivery (ver recargoDeliveryBs más
+    // arriba) — se agrega sola al guardar, tanto a los items reales de la
+    // venta como al ticket impreso, sin que el cajero tenga que buscar
+    // ningún producto a mano.
+    const lineaRecargoDelivery: LineaCarrito | null =
+      activo.esDelivery && totalUnidadesCarrito > 0
+        ? {
+            producto_id: PRODUCTO_DELIVERY_ID,
+            codigo_barra: "1111111",
+            nombre: "DELIVERY",
+            cantidad: totalUnidadesCarrito,
+            precio_unit_bs: COMISION_USD_POR_PRODUCTO * config.tasa_cambio_dia,
+            es_gravable: 0,
+            tasa_iva: 0,
+            stock_disponible: 0,
+            por_peso: 0,
+          }
+        : null;
+    const carritoConRecargo = lineaRecargoDelivery ? [...carrito, lineaRecargoDelivery] : carrito;
 
     setGuardando(true);
     const id = crypto.randomUUID();
@@ -1002,7 +1065,9 @@ export default function Venta({
           total_bs: total,
           estado: esCredito ? "CREDITO_PENDIENTE" : "COMPLETADA",
           monto_pendiente_usd: montoPendienteUsd,
-          items: carrito.map((l) => ({
+          canal: activo.esDelivery ? "DELIVERY" : "TIENDA",
+          repartidor_id: activo.esDelivery ? activo.repartidorId : null,
+          items: carritoConRecargo.map((l) => ({
             producto_id: l.producto_id,
             cantidad: l.cantidad,
             precio_unit_bs: l.precio_unit_bs,
@@ -1027,7 +1092,7 @@ export default function Venta({
       numero: numeroTicket,
       fechaHora,
       vendedor: vendedor?.nombre ?? "Sin especificar",
-      lineas: carrito,
+      lineas: carritoConRecargo,
       pagos: pagosReales,
       subtotal,
       total,
@@ -1135,7 +1200,9 @@ export default function Venta({
     <div>
       <div className="ticket-tabs">
         {tickets.map((t, i) => {
-          const { total: totalT } = calcularTotales(t.carrito, config.tasa_cambio_dia);
+          const { total: totalCarritoT } = calcularTotales(t.carrito, config.tasa_cambio_dia);
+          const unidadesT = t.carrito.reduce((acc, l) => acc + (l.por_peso ? 1 : l.cantidad), 0);
+          const totalT = t.esDelivery ? totalCarritoT + unidadesT * COMISION_USD_POR_PRODUCTO * config.tasa_cambio_dia : totalCarritoT;
           return (
             <div key={t.id} className={`ticket-tab ${t.id === activeId ? "ticket-tab-activo" : ""}`}>
               <button className="ticket-tab-btn" onClick={() => cambiarDeTicket(t.id)}>
@@ -1471,6 +1538,48 @@ export default function Venta({
                   </button>
                 </div>
               )}
+            </div>
+          )}
+
+          <div className="form-row" style={{ marginTop: 16, alignItems: "center" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <input
+                type="checkbox"
+                checked={activo.esDelivery}
+                onChange={(e) =>
+                  actualizarActivo({
+                    esDelivery: e.target.checked,
+                    repartidorId: e.target.checked ? activo.repartidorId : null,
+                  })
+                }
+              />
+              Es delivery (WhatsApp)
+            </label>
+            {activo.esDelivery && (
+              <select
+                value={activo.repartidorId ?? ""}
+                onChange={(e) => actualizarActivo({ repartidorId: e.target.value || null })}
+              >
+                <option value="">Repartidor (opcional, se puede asignar después)…</option>
+                {repartidores.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.nombre}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+          {activo.esDelivery && (
+            <div className="previsualizacion" style={{ marginTop: 8 }}>
+              Recargo de delivery: <strong>Bs {recargoDeliveryBs.toFixed(2)}</strong>{" "}
+              <span className="hint" style={{ margin: 0 }}>
+                ({totalUnidadesCarrito} producto{totalUnidadesCarrito === 1 ? "" : "s"} × USD{" "}
+                {COMISION_USD_POR_PRODUCTO.toFixed(2)})
+              </span>
+              <br />
+              <span className="hint" style={{ marginTop: 4 }}>
+                Ya se suma solo al total a cobrar — no hace falta agregar ningún producto a mano.
+              </span>
             </div>
           )}
 

@@ -17,6 +17,7 @@ export type Producto = {
   unidades_por_paquete: number;
   activo: number; // 0/1
   disponible_delivery: number; // 0/1 — si se ofrece o no en la app de delivery
+  por_peso: number; // 0/1 — se vende por peso (kg), no por unidad
 };
 
 export type ProductoInventario = Producto & {
@@ -51,6 +52,16 @@ export type Vendedor = {
   activo: number; // 0/1
 };
 
+// Repartidor ("chivo") que hace entregas de delivery — tanto por WhatsApp
+// (venta cargada a mano en Venta.tsx marcada "es delivery") como por la app
+// (se asigna después desde Facturas). Se le paga comisión de $0.10 por
+// producto entregado cada 15 y último de mes.
+export type Repartidor = {
+  id: string;
+  nombre: string;
+  activo: number; // 0/1
+};
+
 export type Rol = "ADMIN" | "CAJERO";
 
 export type Usuario = {
@@ -70,6 +81,10 @@ export type LineaCarrito = {
   es_gravable: number;
   tasa_iva: number;
   stock_disponible: number;
+  // Para el recargo/comisión de delivery: un producto por peso (ej. 0.2kg)
+  // cuenta como 1 producto entero, no como 0.2 — ver totalUnidadesCarrito
+  // en Venta.tsx.
+  por_peso: number;
 };
 
 export type Categoria = {
@@ -223,6 +238,7 @@ export type FacturaVentaResumen = {
   total_bs: number;
   estado: string;
   canal: string; // TIENDA / DELIVERY
+  repartidor_id: string | null;
 };
 
 export type FacturaVentaCompleta = {
@@ -239,6 +255,8 @@ export type FacturaVentaCompleta = {
   total_bs: number;
   estado: string;
   monto_pendiente_usd: number | null;
+  canal: string; // TIENDA / DELIVERY
+  repartidor_id: string | null;
 };
 
 export type FacturaVentaItemDetalle = {

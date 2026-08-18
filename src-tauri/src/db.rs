@@ -134,6 +134,8 @@ const MIGRACIONES: &[(i64, &str, &str)] = &[
     (19, "delivery", include_str!("../migrations/0019_delivery.sql")),
     (20, "interruptor de sincronizacion automatica de delivery", include_str!("../migrations/0020_delivery_sync_toggle.sql")),
     (21, "verificacion admin de pago movil", include_str!("../migrations/0021_pago_movil_verificado.sql")),
+    (22, "pedido de delivery unico por venta", include_str!("../migrations/0022_pedido_delivery_unico.sql")),
+    (23, "repartidores y comision de delivery", include_str!("../migrations/0023_repartidores.sql")),
 ];
 
 pub async fn ejecutar_migraciones(conn: &libsql::Connection) -> anyhow::Result<()> {

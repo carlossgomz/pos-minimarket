@@ -231,11 +231,26 @@ async fn revisar_pendientes(
     *estado_pedidos.0.write().await = cuerpo.total;
 }
 
-/// Reclama e importa cada pedido entregado sin importar. El "reclamo"
-/// (PATCH marcar-importado) va ANTES de crear la venta: si no lo gana
-/// (otra PC del POS lo importó primero), se descarta sin tocar nada acá —
-/// así nunca se duplica una venta aunque haya más de una PC corriendo esta
-/// tarea al mismo tiempo.
+/// Importa cada pedido entregado sin importar, y SOLO SI la venta quedó
+/// creada de verdad, avisa a la delivery-app con el PATCH marcar-importado.
+///
+/// Antes era al revés (reclamar primero, crear después): si algo fallaba
+/// creando la venta — un error transitorio, un dato raro de un pedido en
+/// particular — el pedido ya había quedado marcado como importado en la
+/// delivery-app, así que nunca se reintentaba, y esa venta se perdía para
+/// siempre sin que nadie se enterara (pasó de verdad con un pedido real el
+/// 2026-08-16). Invertir el orden hace que un fallo se reintente solo en el
+/// próximo ciclo (cada 5s) hasta que funcione.
+///
+/// Para que esto siga siendo seguro con más de una PC corriendo el POS a
+/// la vez (ya no hay "reclamo" que evite que dos PCs importen el mismo
+/// pedido en paralelo), `importar_pedido_como_venta` es idempotente: si la
+/// venta ya existe (la creó esta misma PC en un ciclo anterior que falló
+/// después de crearla pero antes de marcarla, o la ganó otra PC en la
+/// carrera) simplemente no hace nada y deja que se marque igual. Como
+/// respaldo también hay un índice único en ventas.pedido_delivery_id (ver
+/// migración 0022) que hace fallar limpio el INSERT si dos PCs llegan a
+/// intentarlo exactamente al mismo tiempo.
 async fn revisar_entregados(
     cliente: &reqwest::Client,
     cfg: &ConfigDelivery,
@@ -250,19 +265,22 @@ async fn revisar_entregados(
     let Ok(cuerpo) = respuesta.json::<PedidosEntregadosRespuesta>().await else { return };
 
     for pedido in cuerpo.pedidos {
-        let reclamo = cliente
+        if let Err(e) = importar_pedido_como_venta(conn, &pedido).await {
+            eprintln!(
+                "Delivery: no se pudo registrar la venta del pedido {} — se reintenta en el próximo ciclo: {e}",
+                pedido.id
+            );
+            continue; // no se marca importado, para que se reintente
+        }
+
+        let _ = cliente
             .patch(format!("{}/api/pos/pedidos/{}/marcar-importado", cfg.api_url, pedido.id))
             .bearer_auth(&cfg.token)
             .send()
             .await;
-        match reclamo {
-            Ok(r) if r.status().is_success() => {}
-            _ => continue, // ya lo importó otra PC, o falló el reclamo — se reintenta el próximo ciclo
-        }
-
-        if let Err(e) = importar_pedido_como_venta(conn, &pedido).await {
-            eprintln!("Delivery: no se pudo registrar la venta del pedido {}: {e}", pedido.id);
-        }
+        // Si el PATCH falla (red caída, etc.) no pasa nada grave: la venta
+        // ya quedó creada, y como importar_pedido_como_venta es idempotente,
+        // el próximo ciclo simplemente vuelve a marcarlo sin duplicar nada.
     }
 }
 
@@ -270,6 +288,17 @@ async fn importar_pedido_como_venta(
     conn: &libsql::Connection,
     pedido: &PedidoEntregado,
 ) -> Result<(), String> {
+    let mut filas_existentes = conn
+        .query(
+            "SELECT id FROM ventas WHERE pedido_delivery_id = ?1",
+            libsql::params![pedido.id.clone()],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    if filas_existentes.next().await.map_err(|e| e.to_string())?.is_some() {
+        return Ok(()); // ya se había creado la venta — solo falta (re)marcarla
+    }
+
     let mut items = Vec::new();
     let mut subtotal_bs = 0.0;
 
@@ -327,6 +356,9 @@ async fn importar_pedido_como_venta(
         monto_pendiente_usd: None,
         canal: "DELIVERY".to_string(),
         pedido_delivery_id: Some(pedido.id.clone()),
+        // La app todavía no captura quién entrega cada pedido — se asigna
+        // después a mano desde Facturas (ver Cuentas → Comisiones de delivery).
+        repartidor_id: None,
         items,
         // El método de pago real de un pedido de delivery es pago móvil
         // (así es como se cobra) — "canal" arriba ya deja la venta
@@ -340,8 +372,15 @@ async fn importar_pedido_como_venta(
         }],
     };
 
-    comandos::confirmar_venta_interna(conn, &input).await?;
-    Ok(())
+    match comandos::confirmar_venta_interna(conn, &input).await {
+        Ok(_) => Ok(()),
+        // Dos PCs intentaron crear la misma venta casi al mismo tiempo — la
+        // otra ganó la carrera (ver índice único de la migración 0022). No
+        // es un error real: la venta ya existe, solo falta marcar el
+        // pedido, que es justo lo que hace el llamador al recibir Ok acá.
+        Err(e) if e.contains("UNIQUE constraint failed") && e.contains("pedido_delivery_id") => Ok(()),
+        Err(e) => Err(e),
+    }
 }
 
 /// Arranca las dos tareas de fondo (catálogo cada 5 min, pedidos cada 5s

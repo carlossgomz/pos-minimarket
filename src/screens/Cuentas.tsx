@@ -9,12 +9,21 @@ import {
   FacturaVentaItemEditable,
   FacturaVentaPagoDetalle,
   ProveedorDeudor,
+  Repartidor,
   VentaCredito,
 } from "../types";
 import EditorItemsVenta from "./EditorItemsVenta";
 import { normalizarTexto, sqlSinAcentos } from "../busqueda";
+import { fechaHoraVenezuela } from "../fecha";
 
 const EPS = 0.01;
+// Comisión de delivery: $0.10 por cada producto entregado (por WhatsApp o
+// por la app), pagada cada 15 y último de mes.
+const COMISION_USD_POR_PRODUCTO = 0.1;
+// Producto placeholder que se usaba ANTES para simular la comisión a mano
+// (ver Venta.tsx) — se sigue excluyendo del conteo de productos igual que
+// en Estadisticas.tsx, por si queda alguno agregado por costumbre.
+const PRODUCTO_DELIVERY_ID = "f195fbac-103d-48fa-a27a-28371fba7745";
 
 // Análisis de vencimiento de cuentas por pagar: cuántos días pasaron
 // desde que se creó la factura del proveedor, para saber cuáles llevan
@@ -190,6 +199,8 @@ function CuentasPorCobrar({ config, esAdmin }: { config: ConfigRow; esAdmin: boo
     if (cedulaAbierta) await recargarVentasCliente(cedulaAbierta);
   }
 
+  const totalGeneralUsd = clientes.reduce((acc, c) => acc + c.total_pendiente_usd, 0);
+
   return (
     <div className="card">
       <h2>Clientes con saldo pendiente</h2>
@@ -197,6 +208,14 @@ function CuentasPorCobrar({ config, esAdmin }: { config: ConfigRow; esAdmin: boo
         El saldo en bolívares se calcula a la tasa del día de hoy ({config.tasa_cambio_dia.toFixed(2)}{" "}
         Bs/$) — cambia solo si cambias la tasa arriba, no la de cada venta.
       </p>
+      <div className="totales" style={{ marginBottom: 12 }}>
+        <strong>
+          Total pendiente de todos los clientes: USD {totalGeneralUsd.toFixed(2)}{" "}
+          <span className="hint" style={{ margin: 0 }}>
+            (Bs {(totalGeneralUsd * config.tasa_cambio_dia).toFixed(2)})
+          </span>
+        </strong>
+      </div>
       <table>
         <thead>
           <tr>
@@ -472,6 +491,8 @@ function CuentasPorPagar({ config }: { config: ConfigRow }) {
     }
   }
 
+  const totalGeneralUsd = proveedores.reduce((acc, p) => acc + p.total_pendiente_usd, 0);
+
   return (
     <div className="card">
       <h2>Proveedores con saldo pendiente</h2>
@@ -479,6 +500,14 @@ function CuentasPorPagar({ config }: { config: ConfigRow }) {
         El saldo en bolívares se calcula a la tasa del día de hoy ({config.tasa_cambio_dia.toFixed(2)}{" "}
         Bs/$) — cambia solo si cambias la tasa arriba, no la de cada factura.
       </p>
+      <div className="totales" style={{ marginBottom: 12 }}>
+        <strong>
+          Total pendiente a todos los proveedores: USD {totalGeneralUsd.toFixed(2)}{" "}
+          <span className="hint" style={{ margin: 0 }}>
+            (Bs {(totalGeneralUsd * config.tasa_cambio_dia).toFixed(2)})
+          </span>
+        </strong>
+      </div>
       <table>
         <thead>
           <tr>
@@ -831,8 +860,450 @@ function FacturasPagadas() {
   );
 }
 
+// Quincena actual (1-15 o 16-fin de mes) en Venezuela, como valores por
+// defecto del reporte de comisiones — así lo primero que se ve al entrar
+// ya es el período que toca pagar, sin tener que calcularlo a mano.
+function quincenaActual(): { desde: string; hasta: string } {
+  const hoy = fechaHoraVenezuela().slice(0, 10);
+  const [anio, mes, dia] = hoy.split("-").map(Number);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  if (dia <= 15) {
+    return { desde: `${anio}-${pad(mes)}-01`, hasta: `${anio}-${pad(mes)}-15` };
+  }
+  const ultimoDia = new Date(anio, mes, 0).getDate(); // día 0 del mes siguiente = último del actual
+  return { desde: `${anio}-${pad(mes)}-16`, hasta: `${anio}-${pad(mes)}-${pad(ultimoDia)}` };
+}
+
+type ComisionRepartidor = {
+  repartidor_id: string | null;
+  repartidor_nombre: string | null;
+  num_ventas: number;
+  total_productos: number;
+};
+
+type VentaSinRepartidor = {
+  id: string;
+  numero_ticket: string;
+  fecha_hora: string;
+  cliente_nombre: string | null;
+};
+
+// Repartidores ("chivos") + reporte de comisión por quincena — $0.10 por
+// cada producto entregado en una venta canal=DELIVERY (por WhatsApp o por
+// la app), sea cual sea el origen. Reemplaza el cálculo a mano que se
+// hacía contando el producto placeholder "DELIVERY" del carrito.
+function ComisionesDelivery() {
+  const [repartidores, setRepartidores] = useState<Repartidor[]>([]);
+  const [nombreNuevo, setNombreNuevo] = useState("");
+  const [mensajeRepartidor, setMensajeRepartidor] = useState<string | null>(null);
+
+  const inicial = quincenaActual();
+  const [desde, setDesde] = useState(inicial.desde);
+  const [hasta, setHasta] = useState(inicial.hasta);
+  const [comisiones, setComisiones] = useState<ComisionRepartidor[]>([]);
+  const [sinAsignar, setSinAsignar] = useState<VentaSinRepartidor[]>([]);
+
+  async function cargarRepartidores() {
+    const db = await getDb();
+    setRepartidores(await db.select<Repartidor[]>("SELECT * FROM repartidores ORDER BY activo DESC, nombre"));
+  }
+
+  useEffect(() => {
+    cargarRepartidores();
+  }, []);
+
+  async function agregarRepartidor() {
+    const nombre = nombreNuevo.trim();
+    if (!nombre) return;
+    const db = await getDb();
+    await db.execute("INSERT INTO repartidores (id, nombre, activo) VALUES ($1,$2,1)", [crypto.randomUUID(), nombre]);
+    setNombreNuevo("");
+    setMensajeRepartidor(null);
+    await cargarRepartidores();
+  }
+
+  async function toggleActivoRepartidor(r: Repartidor) {
+    const db = await getDb();
+    await db.execute("UPDATE repartidores SET activo = $1 WHERE id = $2", [r.activo ? 0 : 1, r.id]);
+    await cargarRepartidores();
+  }
+
+  async function cargarComisiones() {
+    const db = await getDb();
+    // Un producto por peso (ej. 0.2kg) cuenta como 1 producto entero, no
+    // como 0.2 — mismo criterio que Reportes/Estadísticas, la comisión es
+    // por PRODUCTO entregado, no por kilo.
+    const rows = await db.select<ComisionRepartidor[]>(
+      `SELECT v.repartidor_id, r.nombre as repartidor_nombre,
+              COUNT(DISTINCT v.id) as num_ventas,
+              COALESCE(SUM(CASE WHEN p.por_peso = 1 THEN 1 ELSE vi.cantidad END), 0) as total_productos
+       FROM ventas v
+       JOIN venta_items vi ON vi.venta_id = v.id AND vi.producto_id != $3
+       JOIN productos p ON p.id = vi.producto_id
+       LEFT JOIN repartidores r ON r.id = v.repartidor_id
+       WHERE v.canal = 'DELIVERY' AND date(v.fecha_hora) BETWEEN $1 AND $2
+       GROUP BY v.repartidor_id
+       ORDER BY repartidor_nombre IS NULL, repartidor_nombre`,
+      [desde, hasta, PRODUCTO_DELIVERY_ID]
+    );
+    setComisiones(rows);
+
+    const sinAsignarRows = await db.select<VentaSinRepartidor[]>(
+      `SELECT id, numero_ticket, fecha_hora, cliente_nombre FROM ventas
+       WHERE canal = 'DELIVERY' AND repartidor_id IS NULL AND date(fecha_hora) BETWEEN $1 AND $2
+       ORDER BY fecha_hora`,
+      [desde, hasta]
+    );
+    setSinAsignar(sinAsignarRows);
+  }
+
+  useEffect(() => {
+    cargarComisiones();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [desde, hasta]);
+
+  const totalProductosGlobal = comisiones.reduce((acc, c) => acc + c.total_productos, 0);
+  const totalComisionGlobal = totalProductosGlobal * COMISION_USD_POR_PRODUCTO;
+
+  return (
+    <div>
+      <div className="card">
+        <h2>Repartidores</h2>
+        <p className="hint">
+          Se les paga USD {COMISION_USD_POR_PRODUCTO.toFixed(2)} por cada producto que entreguen
+          (delivery por WhatsApp o por la app) — el reporte de abajo lo calcula solo.
+        </p>
+        <div className="form-row">
+          <input
+            placeholder="Nombre del repartidor"
+            value={nombreNuevo}
+            onChange={(e) => setNombreNuevo(e.target.value)}
+          />
+          <button type="button" onClick={agregarRepartidor}>
+            Agregar
+          </button>
+        </div>
+        {mensajeRepartidor && <p className="error">{mensajeRepartidor}</p>}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+          {repartidores.map((r) => (
+            <span
+              key={r.id}
+              className={`badge ${r.activo ? "badge-ok" : "badge-agotado"}`}
+              style={{ display: "flex", alignItems: "center", gap: 6 }}
+            >
+              {r.nombre}
+              <button
+                type="button"
+                className="link-btn"
+                style={{ fontSize: 11, padding: 0 }}
+                onClick={() => toggleActivoRepartidor(r)}
+              >
+                {r.activo ? "desactivar" : "activar"}
+              </button>
+            </span>
+          ))}
+          {repartidores.length === 0 && <p className="hint" style={{ margin: 0 }}>Sin repartidores todavía.</p>}
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="form-row" style={{ alignItems: "center", justifyContent: "space-between" }}>
+          <h2 style={{ margin: 0 }}>Comisiones de delivery</h2>
+          <button type="button" className="no-print" onClick={() => window.print()}>
+            Imprimir
+          </button>
+        </div>
+        <div className="form-row">
+          <label style={{ alignSelf: "center" }}>Desde</label>
+          <input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} />
+          <label style={{ alignSelf: "center" }}>Hasta</label>
+          <input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} />
+        </div>
+
+        {sinAsignar.length > 0 && (
+          <div className="aviso-credito" style={{ marginTop: 10 }}>
+            <p style={{ margin: 0 }}>
+              ⚠ Hay {sinAsignar.length} venta{sinAsignar.length === 1 ? "" : "s"} de delivery en este
+              período sin repartidor asignado (no están incluidas en los totales de abajo) — asígnalas
+              desde Facturas antes de pagar:
+            </p>
+            <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+              {sinAsignar.map((v) => (
+                <li key={v.id} style={{ fontSize: 13 }}>
+                  {v.numero_ticket} — {v.cliente_nombre ?? "Consumidor final"} (
+                  {new Date(v.fecha_hora).toLocaleDateString("es-VE")})
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <div style={{ overflowX: "auto", marginTop: 10 }}>
+          <table>
+            <thead>
+              <tr>
+                <th>Repartidor</th>
+                <th>Ventas entregadas</th>
+                <th>Productos entregados</th>
+                <th>Comisión USD</th>
+              </tr>
+            </thead>
+            <tbody>
+              {comisiones.map((c) => (
+                <tr key={c.repartidor_id ?? "sin-repartidor"}>
+                  <td>{c.repartidor_nombre ?? "— sin asignar —"}</td>
+                  <td>{c.num_ventas}</td>
+                  <td>{c.total_productos}</td>
+                  <td>{(c.total_productos * COMISION_USD_POR_PRODUCTO).toFixed(2)}</td>
+                </tr>
+              ))}
+              {comisiones.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="empty">
+                    Sin ventas de delivery en este período.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div className="totales" style={{ marginTop: 10 }}>
+          <span>Total productos entregados: {totalProductosGlobal}</span>
+          <strong>Total comisiones: USD {totalComisionGlobal.toFixed(2)}</strong>
+        </div>
+      </div>
+
+      {/* Solo aparece al imprimir. */}
+      <div className="imprimible">
+        <h2>Comisiones de delivery — {desde} a {hasta}</h2>
+        <p>Impreso el {new Date().toLocaleString("es-VE")}</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Repartidor</th>
+              <th>Ventas entregadas</th>
+              <th>Productos entregados</th>
+              <th>Comisión USD</th>
+            </tr>
+          </thead>
+          <tbody>
+            {comisiones.map((c) => (
+              <tr key={c.repartidor_id ?? "sin-repartidor"}>
+                <td>{c.repartidor_nombre ?? "— sin asignar —"}</td>
+                <td>{c.num_ventas}</td>
+                <td>{c.total_productos}</td>
+                <td>{(c.total_productos * COMISION_USD_POR_PRODUCTO).toFixed(2)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p>
+          <strong>Total: USD {totalComisionGlobal.toFixed(2)}</strong>
+        </p>
+      </div>
+    </div>
+  );
+}
+
+type CreditoPagado = {
+  id: string;
+  venta_id: string;
+  monto_usd: number;
+  monto_bs: number;
+  metodo: string | null;
+  created_at: string;
+  numero_ticket: string;
+  cliente_nombre: string | null;
+  cliente_cedula: string | null;
+};
+
+// Historial de abonos/pagos de crédito ya recibidos de clientes — separado
+// de "Por cobrar" (que solo muestra la deuda pendiente), para poder
+// revisar quién pagó qué y cuándo, con el mismo criterio que "Facturas
+// pagadas" del lado de proveedores.
+function CreditosPagados() {
+  const [cobros, setCobros] = useState<CreditoPagado[]>([]);
+  const [busqueda, setBusqueda] = useState("");
+  const [detalleAbierto, setDetalleAbierto] = useState<string | null>(null);
+  const [itemsDetalle, setItemsDetalle] = useState<FacturaVentaItemDetalle[]>([]);
+
+  async function cargar() {
+    const db = await getDb();
+    const term = busqueda.trim();
+    const rows = await db.select<CreditoPagado[]>(
+      `SELECT c.id, c.venta_id, c.monto_usd, c.monto_bs, c.metodo, c.created_at,
+              v.numero_ticket, v.cliente_nombre, v.cliente_cedula
+       FROM cobros_cliente c JOIN ventas v ON v.id = c.venta_id
+       WHERE ${sqlSinAcentos("v.cliente_nombre")} LIKE $1 OR v.cliente_cedula LIKE $2
+       ORDER BY c.created_at DESC LIMIT 200`,
+      [`%${normalizarTexto(term)}%`, `%${term}%`]
+    );
+    setCobros(rows);
+  }
+
+  useEffect(() => {
+    const timer = setTimeout(cargar, 250);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busqueda]);
+
+  // El detalle es de la VENTA (todos sus productos), no solo de este abono
+  // puntual — una venta a crédito puede haberse pagado de a poco, con
+  // varias filas acá para la misma factura.
+  async function toggleDetalle(c: CreditoPagado) {
+    if (detalleAbierto === c.id) {
+      setDetalleAbierto(null);
+      setItemsDetalle([]);
+      return;
+    }
+    setDetalleAbierto(c.id);
+    const db = await getDb();
+    const itemsRows = await db.select<FacturaVentaItemDetalle[]>(
+      `SELECT p.nombre as producto_nombre, vi.cantidad, vi.precio_unit_bs, vi.subtotal_bs
+       FROM venta_items vi JOIN productos p ON p.id = vi.producto_id
+       WHERE vi.venta_id = $1`,
+      [c.venta_id]
+    );
+    setItemsDetalle(itemsRows);
+  }
+
+  const totalUsd = cobros.reduce((acc, c) => acc + c.monto_usd, 0);
+
+  return (
+    <div className="card">
+      <div className="form-row" style={{ alignItems: "center", justifyContent: "space-between" }}>
+        <h2 style={{ margin: 0 }}>Créditos pagados por clientes</h2>
+        <button type="button" className="no-print" onClick={() => window.print()}>
+          Imprimir
+        </button>
+      </div>
+      <p className="hint">
+        Cada fila es un abono recibido (puede haber varios por la misma venta si se pagó de a
+        poco). Últimos {cobros.length} pagos.
+      </p>
+      <input
+        placeholder="Buscar por nombre o cédula del cliente"
+        value={busqueda}
+        onChange={(e) => setBusqueda(e.target.value)}
+        style={{ marginBottom: 10, width: "100%", padding: "8px 10px", border: "1px solid #b4b2a9", borderRadius: 6 }}
+      />
+      <div className="totales" style={{ marginBottom: 12 }}>
+        <strong>Total mostrado: USD {totalUsd.toFixed(2)}</strong>
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <table>
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Cliente</th>
+              <th>Cédula</th>
+              <th>Ticket</th>
+              <th>Método</th>
+              <th>Monto USD</th>
+              <th>Monto Bs</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {cobros.map((c) => (
+              <Fragment key={c.id}>
+                <tr>
+                  <td>{new Date(c.created_at).toLocaleString("es-VE")}</td>
+                  <td>{c.cliente_nombre ?? "—"}</td>
+                  <td>{c.cliente_cedula ?? "—"}</td>
+                  <td>{c.numero_ticket}</td>
+                  <td>{c.metodo?.split("_").join(" ") ?? "—"}</td>
+                  <td>{c.monto_usd.toFixed(2)}</td>
+                  <td>{c.monto_bs.toFixed(2)}</td>
+                  <td>
+                    <button className="link-btn" onClick={() => toggleDetalle(c)}>
+                      {detalleAbierto === c.id ? "ocultar detalle" : "ver detalle"}
+                    </button>
+                  </td>
+                </tr>
+                {detalleAbierto === c.id && (
+                  <tr>
+                    <td colSpan={8}>
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>Producto</th>
+                            <th>Cant.</th>
+                            <th>Precio Bs</th>
+                            <th>Subtotal Bs</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {itemsDetalle.map((it, i) => (
+                            <tr key={i}>
+                              <td>{it.producto_nombre}</td>
+                              <td>{it.cantidad}</td>
+                              <td>{it.precio_unit_bs.toFixed(2)}</td>
+                              <td>{it.subtotal_bs.toFixed(2)}</td>
+                            </tr>
+                          ))}
+                          {itemsDetalle.length === 0 && (
+                            <tr>
+                              <td colSpan={4} className="empty">
+                                Sin ítems.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            ))}
+            {cobros.length === 0 && (
+              <tr>
+                <td colSpan={8} className="empty">
+                  No hay créditos pagados todavía.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Solo aparece al imprimir. */}
+      <div className="imprimible">
+        <h2>Créditos pagados por clientes</h2>
+        <p>Impreso el {new Date().toLocaleString("es-VE")}</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Cliente</th>
+              <th>Cédula</th>
+              <th>Ticket</th>
+              <th>Método</th>
+              <th>Monto USD</th>
+              <th>Monto Bs</th>
+            </tr>
+          </thead>
+          <tbody>
+            {cobros.map((c) => (
+              <tr key={c.id}>
+                <td>{new Date(c.created_at).toLocaleString("es-VE")}</td>
+                <td>{c.cliente_nombre ?? "—"}</td>
+                <td>{c.cliente_cedula ?? "—"}</td>
+                <td>{c.numero_ticket}</td>
+                <td>{c.metodo?.split("_").join(" ") ?? "—"}</td>
+                <td>{c.monto_usd.toFixed(2)}</td>
+                <td>{c.monto_bs.toFixed(2)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export default function Cuentas({ config, esAdmin }: { config: ConfigRow; esAdmin: boolean }) {
-  const [sub, setSub] = useState<"cobrar" | "pagar" | "pagadas">("cobrar");
+  const [sub, setSub] = useState<"cobrar" | "cobrados" | "pagar" | "pagadas" | "delivery">("cobrar");
 
   // El cajero solo ve las cuentas por cobrar de clientes — lo que se le
   // debe a los proveedores es información administrativa/financiera del
@@ -847,16 +1318,24 @@ export default function Cuentas({ config, esAdmin }: { config: ConfigRow; esAdmi
         <button className={sub === "cobrar" ? "tab-activo" : ""} onClick={() => setSub("cobrar")}>
           Por cobrar (clientes)
         </button>
+        <button className={sub === "cobrados" ? "tab-activo" : ""} onClick={() => setSub("cobrados")}>
+          Créditos pagados
+        </button>
         <button className={sub === "pagar" ? "tab-activo" : ""} onClick={() => setSub("pagar")}>
           Por pagar (proveedores)
         </button>
         <button className={sub === "pagadas" ? "tab-activo" : ""} onClick={() => setSub("pagadas")}>
           Pagadas (proveedores)
         </button>
+        <button className={sub === "delivery" ? "tab-activo" : ""} onClick={() => setSub("delivery")}>
+          Comisiones delivery
+        </button>
       </div>
       {sub === "cobrar" && <CuentasPorCobrar config={config} esAdmin={esAdmin} />}
+      {sub === "cobrados" && <CreditosPagados />}
       {sub === "pagar" && <CuentasPorPagar config={config} />}
       {sub === "pagadas" && <FacturasPagadas />}
+      {sub === "delivery" && <ComisionesDelivery />}
     </div>
   );
 }

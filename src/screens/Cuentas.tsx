@@ -8,6 +8,7 @@ import {
   FacturaVentaItemDetalle,
   FacturaVentaItemEditable,
   FacturaVentaPagoDetalle,
+  METODOS_PAGO,
   ProveedorDeudor,
   Repartidor,
   VentaCredito,
@@ -34,9 +35,9 @@ function diasTranscurridos(fecha: string): number {
 }
 
 function colorVencimiento(dias: number): string {
-  if (dias > 30) return "#a32d2d"; // vencida hace rato
-  if (dias > 15) return "#b9770e"; // se está poniendo vieja
-  return "#5f5e5a";
+  if (dias > 30) return "var(--danger-text)"; // vencida hace rato
+  if (dias > 15) return "var(--warn-text)"; // se está poniendo vieja
+  return "var(--text-secondary)";
 }
 
 function CuentasPorCobrar({ config, esAdmin }: { config: ConfigRow; esAdmin: boolean }) {
@@ -717,7 +718,7 @@ function FacturasPagadas() {
         placeholder="Buscar por proveedor o número de factura"
         value={busqueda}
         onChange={(e) => setBusqueda(e.target.value)}
-        style={{ marginBottom: 10, width: "100%", padding: "8px 10px", border: "1px solid #b4b2a9", borderRadius: 6 }}
+        style={{ marginBottom: 10, width: "100%", padding: "8px 10px", border: "1px solid var(--border-input)", borderRadius: 6 }}
       />
       <div style={{ overflowX: "auto" }}>
         <table>
@@ -1121,7 +1122,7 @@ type CreditoPagado = {
 // de "Por cobrar" (que solo muestra la deuda pendiente), para poder
 // revisar quién pagó qué y cuándo, con el mismo criterio que "Facturas
 // pagadas" del lado de proveedores.
-function CreditosPagados() {
+function CreditosPagados({ esAdmin }: { esAdmin: boolean }) {
   const [cobros, setCobros] = useState<CreditoPagado[]>([]);
   const [busqueda, setBusqueda] = useState("");
   const [detalleAbierto, setDetalleAbierto] = useState<string | null>(null);
@@ -1167,6 +1168,16 @@ function CreditosPagados() {
     setItemsDetalle(itemsRows);
   }
 
+  // Corrige el método de pago de un abono ya registrado — el caso típico
+  // es el mismo que en Facturas: la caja marcó "punto de venta" por error
+  // cuando fue biopago. Solo admin (ver el filtro esAdmin en el render); el
+  // cajero puede ver el historial completo pero no tocar el método.
+  async function actualizarMetodo(cobroId: string, metodo: string) {
+    const db = await getDb();
+    await db.execute("UPDATE cobros_cliente SET metodo = $1 WHERE id = $2", [metodo || null, cobroId]);
+    await cargar();
+  }
+
   const totalUsd = cobros.reduce((acc, c) => acc + c.monto_usd, 0);
 
   return (
@@ -1185,7 +1196,7 @@ function CreditosPagados() {
         placeholder="Buscar por nombre o cédula del cliente"
         value={busqueda}
         onChange={(e) => setBusqueda(e.target.value)}
-        style={{ marginBottom: 10, width: "100%", padding: "8px 10px", border: "1px solid #b4b2a9", borderRadius: 6 }}
+        style={{ marginBottom: 10, width: "100%", padding: "8px 10px", border: "1px solid var(--border-input)", borderRadius: 6 }}
       />
       <div className="totales" style={{ marginBottom: 12 }}>
         <strong>Total mostrado: USD {totalUsd.toFixed(2)}</strong>
@@ -1212,7 +1223,20 @@ function CreditosPagados() {
                   <td>{c.cliente_nombre ?? "—"}</td>
                   <td>{c.cliente_cedula ?? "—"}</td>
                   <td>{c.numero_ticket}</td>
-                  <td>{c.metodo?.split("_").join(" ") ?? "—"}</td>
+                  <td>
+                    {esAdmin ? (
+                      <select value={c.metodo ?? ""} onChange={(e) => actualizarMetodo(c.id, e.target.value)}>
+                        <option value="">—</option>
+                        {METODOS_PAGO.map((m) => (
+                          <option key={m} value={m}>
+                            {m.split("_").join(" ")}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      c.metodo?.split("_").join(" ") ?? "—"
+                    )}
+                  </td>
                   <td>{c.monto_usd.toFixed(2)}</td>
                   <td>{c.monto_bs.toFixed(2)}</td>
                   <td>
@@ -1305,11 +1329,25 @@ function CreditosPagados() {
 export default function Cuentas({ config, esAdmin }: { config: ConfigRow; esAdmin: boolean }) {
   const [sub, setSub] = useState<"cobrar" | "cobrados" | "pagar" | "pagadas" | "delivery">("cobrar");
 
-  // El cajero solo ve las cuentas por cobrar de clientes — lo que se le
-  // debe a los proveedores es información administrativa/financiera del
-  // negocio, no algo que necesite ver en el mostrador.
+  // El cajero ve las cuentas por cobrar de clientes y el historial de
+  // créditos pagados (puede consultarlo, pero no corregir el método de
+  // pago — ver el filtro esAdmin dentro de CreditosPagados). Lo que se le
+  // debe a los proveedores sigue siendo solo administrativo.
   if (!esAdmin) {
-    return <CuentasPorCobrar config={config} esAdmin={false} />;
+    return (
+      <div>
+        <div className="tabs no-print" style={{ marginBottom: 16 }}>
+          <button className={sub === "cobrar" ? "tab-activo" : ""} onClick={() => setSub("cobrar")}>
+            Por cobrar (clientes)
+          </button>
+          <button className={sub === "cobrados" ? "tab-activo" : ""} onClick={() => setSub("cobrados")}>
+            Créditos pagados
+          </button>
+        </div>
+        {sub === "cobrar" && <CuentasPorCobrar config={config} esAdmin={false} />}
+        {sub === "cobrados" && <CreditosPagados esAdmin={false} />}
+      </div>
+    );
   }
 
   return (
@@ -1332,7 +1370,7 @@ export default function Cuentas({ config, esAdmin }: { config: ConfigRow; esAdmi
         </button>
       </div>
       {sub === "cobrar" && <CuentasPorCobrar config={config} esAdmin={esAdmin} />}
-      {sub === "cobrados" && <CreditosPagados />}
+      {sub === "cobrados" && <CreditosPagados esAdmin={esAdmin} />}
       {sub === "pagar" && <CuentasPorPagar config={config} />}
       {sub === "pagadas" && <FacturasPagadas />}
       {sub === "delivery" && <ComisionesDelivery />}

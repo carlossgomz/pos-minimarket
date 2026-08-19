@@ -211,10 +211,10 @@ export default function Estadisticas({ config }: { config: ConfigRow }) {
                   <tr key={p.producto_id}>
                     <td>
                       {p.nombre}
-                      <div style={{ background: "#eee", height: 4, borderRadius: 2, marginTop: 3 }}>
+                      <div style={{ background: "var(--border-subtle)", height: 4, borderRadius: 2, marginTop: 3 }}>
                         <div
                           style={{
-                            background: "#0f6e56",
+                            background: "var(--accent)",
                             height: 4,
                             borderRadius: 2,
                             width: `${(p.cantidad / maxCantidad) * 100}%`,
@@ -277,10 +277,10 @@ export default function Estadisticas({ config }: { config: ConfigRow }) {
                   <tr key={c.cliente_id}>
                     <td>
                       {c.nombre ?? "—"}
-                      <div style={{ background: "#eee", height: 4, borderRadius: 2, marginTop: 3 }}>
+                      <div style={{ background: "var(--border-subtle)", height: 4, borderRadius: 2, marginTop: 3 }}>
                         <div
                           style={{
-                            background: "#0f6e56",
+                            background: "var(--accent)",
                             height: 4,
                             borderRadius: 2,
                             width: `${(c.total_gastado_bs / maxGasto) * 100}%`,

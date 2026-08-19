@@ -239,6 +239,10 @@ export type FacturaVentaResumen = {
   estado: string;
   canal: string; // TIENDA / DELIVERY
   repartidor_id: string | null;
+  // Solo si estado = CREDITO_PAGADO — fecha del último abono que lo saldó,
+  // distinta de fecha_hora (que es cuándo se DIO el crédito). Ver
+  // "Crédito otorgado / Crédito pagado" en Facturas.tsx.
+  fecha_ultimo_pago: string | null;
 };
 
 export type FacturaVentaCompleta = {
@@ -257,6 +261,7 @@ export type FacturaVentaCompleta = {
   monto_pendiente_usd: number | null;
   canal: string; // TIENDA / DELIVERY
   repartidor_id: string | null;
+  fecha_ultimo_pago: string | null;
 };
 
 export type FacturaVentaItemDetalle = {

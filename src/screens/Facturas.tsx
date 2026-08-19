@@ -65,10 +65,18 @@ export default function Facturas({ config, esAdmin }: { config: ConfigRow; esAdm
       params.push(canalFiltro);
       filtroCanal = `AND canal = $${params.length}`;
     }
+    // Una venta a crédito ya pagada también debe aparecer si el RANGO
+    // filtrado coincide con el día en que se terminó de pagar (no solo el
+    // día en que se dio el crédito) — así, si se dio hace 3 días y se pagó
+    // hoy, filtrar "hoy" la sigue mostrando. Ver fecha_ultimo_pago abajo.
     const rows = await db.select<FacturaVentaResumen[]>(
-      `SELECT id, numero_ticket, fecha_hora, cliente_nombre, cliente_cedula, vendedor_nombre, total_bs, estado, canal, repartidor_id
+      `SELECT id, numero_ticket, fecha_hora, cliente_nombre, cliente_cedula, vendedor_nombre, total_bs, estado, canal, repartidor_id,
+              (SELECT MAX(created_at) FROM cobros_cliente WHERE venta_id = ventas.id) as fecha_ultimo_pago
        FROM ventas
-       WHERE date(fecha_hora) BETWEEN $1 AND $2
+       WHERE (
+         date(fecha_hora) BETWEEN $1 AND $2
+         OR (estado = 'CREDITO_PAGADO' AND date((SELECT MAX(created_at) FROM cobros_cliente WHERE venta_id = ventas.id)) BETWEEN $1 AND $2)
+       )
          AND (numero_ticket LIKE $3 OR ${sqlSinAcentos("cliente_nombre")} LIKE $4 OR cliente_cedula LIKE $3)
          ${filtroMetodo}
          ${filtroCanal}
@@ -90,7 +98,8 @@ export default function Facturas({ config, esAdmin }: { config: ConfigRow; esAdm
     const db = await getDb();
     const completa = await db.select<FacturaVentaCompleta[]>(
       `SELECT id, numero_ticket, fecha_hora, cliente_nombre, cliente_cedula, cliente_direccion, vendedor_nombre,
-              tasa_cambio_dia, subtotal_bs, iva_bs, total_bs, estado, monto_pendiente_usd, canal, repartidor_id
+              tasa_cambio_dia, subtotal_bs, iva_bs, total_bs, estado, monto_pendiente_usd, canal, repartidor_id,
+              (SELECT MAX(created_at) FROM cobros_cliente WHERE venta_id = ventas.id) as fecha_ultimo_pago
        FROM ventas WHERE id = $1`,
       [id]
     );
@@ -146,7 +155,8 @@ export default function Facturas({ config, esAdmin }: { config: ConfigRow; esAdm
   // Quién entregó esta venta de delivery — se puede asignar/cambiar en
   // cualquier momento, tanto para las cargadas por WhatsApp (Venta.tsx) como
   // para las importadas de la app (que llegan sin repartidor, ver
-  // delivery.rs). Solo admin.
+  // delivery.rs). Visible para cajero también (no solo admin) — el cajero
+  // es quien suele estar al tanto de a quién se le entregó cada pedido.
   async function asignarRepartidor(repartidorId: string) {
     if (!seleccionada) return;
     const db = await getDb();
@@ -242,7 +252,19 @@ export default function Facturas({ config, esAdmin }: { config: ConfigRow; esAdm
                     </span>
                   )}
                 </td>
-                <td>{formatearFechaHora(f.fecha_hora)}</td>
+                <td>
+                  {f.estado === "CREDITO_PAGADO" && f.fecha_ultimo_pago ? (
+                    <>
+                      <span className="hint" style={{ margin: 0 }}>
+                        Crédito otorgado: {formatearFechaHora(f.fecha_hora)}
+                      </span>
+                      <br />
+                      Crédito pagado: {formatearFechaHora(f.fecha_ultimo_pago)}
+                    </>
+                  ) : (
+                    formatearFechaHora(f.fecha_hora)
+                  )}
+                </td>
                 <td>{f.cliente_nombre ?? "Consumidor final"}</td>
                 <td>{f.vendedor_nombre ?? "—"}</td>
                 <td>{f.total_bs.toFixed(2)}</td>
@@ -273,7 +295,15 @@ export default function Facturas({ config, esAdmin }: { config: ConfigRow; esAdm
             <h2>Factura {seleccionada.numero_ticket}</h2>
             <img src={logo} alt={config.nombre_negocio} className="ticket-logo" />
             <p className="ticket-meta">
-              {formatearFechaHora(seleccionada.fecha_hora)}
+              {seleccionada.estado === "CREDITO_PAGADO" && seleccionada.fecha_ultimo_pago ? (
+                <>
+                  Crédito otorgado: {formatearFechaHora(seleccionada.fecha_hora)}
+                  <br />
+                  Crédito pagado: {formatearFechaHora(seleccionada.fecha_ultimo_pago)}
+                </>
+              ) : (
+                formatearFechaHora(seleccionada.fecha_hora)
+              )}
               <br />
               Vendedor: {seleccionada.vendedor_nombre ?? "sin especificar"}
               <br />
@@ -290,21 +320,17 @@ export default function Facturas({ config, esAdmin }: { config: ConfigRow; esAdm
             {seleccionada.canal === "DELIVERY" && (
               <div className="form-row no-print" style={{ alignItems: "center" }}>
                 <span style={{ minWidth: 90 }}>Repartidor:</span>
-                {esAdmin ? (
-                  <select
-                    value={seleccionada.repartidor_id ?? ""}
-                    onChange={(e) => asignarRepartidor(e.target.value)}
-                  >
-                    <option value="">Sin asignar</option>
-                    {repartidores.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.nombre}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <span>{repartidores.find((r) => r.id === seleccionada.repartidor_id)?.nombre ?? "Sin asignar"}</span>
-                )}
+                <select
+                  value={seleccionada.repartidor_id ?? ""}
+                  onChange={(e) => asignarRepartidor(e.target.value)}
+                >
+                  <option value="">Sin asignar</option>
+                  {repartidores.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.nombre}
+                    </option>
+                  ))}
+                </select>
               </div>
             )}
             <table>
@@ -351,7 +377,7 @@ export default function Facturas({ config, esAdmin }: { config: ConfigRow; esAdm
             <p>IVA: Bs {seleccionada.iva_bs.toFixed(2)}</p>
             <p className="ticket-total">
               Total: Bs {seleccionada.total_bs.toFixed(2)}{" "}
-              <span style={{ fontWeight: 400, fontSize: 13, color: "#5f5e5a" }}>
+              <span style={{ fontWeight: 400, fontSize: 13, color: "var(--text-secondary)" }}>
                 (USD {(seleccionada.total_bs / seleccionada.tasa_cambio_dia).toFixed(2)})
               </span>
             </p>

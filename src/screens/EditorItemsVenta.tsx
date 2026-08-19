@@ -183,7 +183,7 @@ export default function EditorItemsVenta({
             padding: 4,
             maxHeight: 200,
             overflowY: "auto",
-            border: "1px solid #d3d1c7",
+            border: "1px solid var(--border)",
             borderRadius: 6,
           }}
         >

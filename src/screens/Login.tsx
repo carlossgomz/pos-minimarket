@@ -40,7 +40,7 @@ export default function Login({ config, onLogin }: { config: ConfigRow; onLogin:
   return (
     <div className="page" style={{ maxWidth: 380, paddingTop: 100 }}>
       <div className="card">
-        <h1 style={{ fontSize: 20, color: "#0f6e56", marginTop: 0 }}>{config.nombre_negocio}</h1>
+        <h1 style={{ fontSize: 20, color: "var(--accent-text)", marginTop: 0 }}>{config.nombre_negocio}</h1>
         <p className="hint">Inicia sesión para continuar.</p>
         <form onSubmit={entrar}>
           <div className="campo" style={{ marginBottom: 12 }}>

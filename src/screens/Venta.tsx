@@ -1138,7 +1138,7 @@ export default function Venta({
       <div className="card ticket">
         <h2>Venta registrada ✅</h2>
         {recibo.sinConexion && (
-          <p style={{ background: "#fff3cd", color: "#7a5c00", padding: "8px 12px", borderRadius: 6, fontWeight: 600 }}>
+          <p style={{ background: "var(--credito-bg)", color: "var(--credito-text)", padding: "8px 12px", borderRadius: 6, fontWeight: 600 }}>
             ⚠ Guardada sin conexión — el número de ticket es provisional y se ajustará solo cuando vuelva internet.
           </p>
         )}
@@ -1183,7 +1183,7 @@ export default function Venta({
         <p>Subtotal: Bs {recibo.subtotal.toFixed(2)}</p>
         <p className="ticket-total">
           Total: Bs {recibo.total.toFixed(2)}{" "}
-          <span style={{ fontWeight: 400, fontSize: 13, color: "#5f5e5a" }}>
+          <span style={{ fontWeight: 400, fontSize: 13, color: "var(--text-secondary)" }}>
             (USD {(recibo.total / recibo.tasa).toFixed(2)})
           </span>
         </p>
@@ -1222,7 +1222,7 @@ export default function Venta({
         </button>
       </div>
 
-      <div className="card" style={{ marginBottom: 12, display: "flex", justifyContent: "space-between", fontSize: 13, color: "#5f5e5a" }}>
+      <div className="card" style={{ marginBottom: 12, display: "flex", justifyContent: "space-between", fontSize: 13, color: "var(--text-secondary)" }}>
         <span>Próximo N° de venta: <strong>{proximoNumero}</strong></span>
         <span>{formatearFechaHora(horaActual)} (Venezuela)</span>
         <span>Vendedor: <strong>{vendedor?.nombre ?? "sin seleccionar"}</strong></span>
@@ -1250,8 +1250,8 @@ export default function Venta({
                   top: "calc(100% + 4px)",
                   left: 0,
                   right: 90,
-                  background: "#fff",
-                  border: "1px solid #d3d1c7",
+                  background: "var(--bg-card)",
+                  border: "1px solid var(--border)",
                   borderRadius: 8,
                   listStyle: "none",
                   margin: 0,
@@ -1268,14 +1268,14 @@ export default function Venta({
                       padding: "8px 10px",
                       borderRadius: 6,
                       cursor: "pointer",
-                      background: i === indiceActivo ? "#f1efe8" : "transparent",
+                      background: i === indiceActivo ? "var(--bg-soft)" : "transparent",
                       display: "flex",
                       justifyContent: "space-between",
                       fontSize: 14,
                     }}
                   >
                     <span>{p.nombre}</span>
-                    <span style={{ color: "#5f5e5a" }}>
+                    <span style={{ color: "var(--text-secondary)" }}>
                       {p.codigo_barra} · Bs {precioVentaBsHoy(p, config.tasa_cambio_dia).toFixed(2)} (USD{" "}
                       {precioVentaUsd(p).toFixed(2)})
                     </span>
@@ -1465,8 +1465,8 @@ export default function Venta({
                     top: "calc(100% + 4px)",
                     left: 0,
                     right: 0,
-                    background: "#fff",
-                    border: "1px solid #d3d1c7",
+                    background: "var(--bg-card)",
+                    border: "1px solid var(--border)",
                     borderRadius: 8,
                     listStyle: "none",
                     margin: 0,
@@ -1485,7 +1485,7 @@ export default function Venta({
                     </li>
                   ))}
                   {clienteResultados.length === 0 && clienteBusqueda.trim().length >= 2 && (
-                    <li style={{ padding: "8px 10px", fontSize: 13, color: "#5f5e5a" }}>
+                    <li style={{ padding: "8px 10px", fontSize: 13, color: "var(--text-secondary)" }}>
                       Sin resultados para "{clienteBusqueda}".
                       {!mostrarClienteNuevo && (
                         <button
@@ -1733,8 +1733,8 @@ export default function Venta({
                     top: "calc(100% + 4px)",
                     left: 0,
                     right: 90,
-                    background: "#fff",
-                    border: "1px solid #d3d1c7",
+                    background: "var(--bg-card)",
+                    border: "1px solid var(--border)",
                     borderRadius: 8,
                     listStyle: "none",
                     margin: 0,
@@ -1757,7 +1757,7 @@ export default function Venta({
                       }}
                     >
                       <span>{p.nombre}</span>
-                      <span style={{ color: "#5f5e5a" }}>
+                      <span style={{ color: "var(--text-secondary)" }}>
                         {p.codigo_barra} · stock {formatearStock(p.stock_actual)}
                       </span>
                     </li>
@@ -1796,7 +1796,7 @@ export default function Venta({
                         value={l.motivo}
                         list="motivos-consumo-interno"
                         onChange={(e) => cambiarMotivoConsumo(l.producto_id, e.target.value)}
-                        style={{ width: "100%", padding: "6px 8px", border: "1px solid #b4b2a9", borderRadius: 6 }}
+                        style={{ width: "100%", padding: "6px 8px", border: "1px solid var(--border-input)", borderRadius: 6 }}
                       />
                     </td>
                     <td>
@@ -1852,7 +1852,7 @@ export default function Venta({
 
         {mostrarAvances && (
           <>
-            <div className="card" style={{ background: "#f7f6f2" }}>
+            <div className="card" style={{ background: "var(--bg-soft)" }}>
               <div className="form-row" style={{ alignItems: "center", justifyContent: "space-between" }}>
                 <h2 style={{ margin: 0 }}>
                   Capital externo disponible:{" "}
@@ -2051,7 +2051,7 @@ export default function Venta({
             </p>
             <p className="ticket-total">
               Total: Bs {total.toFixed(2)}{" "}
-              <span style={{ fontWeight: 400, fontSize: 13, color: "#5f5e5a" }}>
+              <span style={{ fontWeight: 400, fontSize: 13, color: "var(--text-secondary)" }}>
                 (USD {(total / config.tasa_cambio_dia).toFixed(2)})
               </span>
             </p>

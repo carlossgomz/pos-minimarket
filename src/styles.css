@@ -1,6 +1,78 @@
+/* Colores como variables, no valores sueltos repetidos por todo el
+   archivo — así el tema oscuro de abajo solo redefine estas variables una
+   vez, en vez de tener que duplicar cada regla para cada tema. El tema se
+   activa poniendo data-theme="oscuro" en <html> (ver App.tsx). */
 :root {
   color-scheme: light;
   font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+
+  --bg: #f1efe8;
+  --bg-card: #fff;
+  --bg-input: #fff;
+  --bg-soft: #f1efe8;
+
+  --text: #2c2c2a;
+  --text-secondary: #5f5e5a;
+  --text-muted: #888780;
+
+  --border: #d3d1c7;
+  --border-input: #b4b2a9;
+  --border-subtle: #eceae2;
+
+  --accent: #0f6e56;
+  --accent-text: #0f6e56;
+  --accent-contrast: #fff;
+  --accent-soft-bg: #eaf3ef;
+  --accent-soft-bg-hover: #d9ece3;
+
+  --warn-bg: #fdf0dc;
+  --warn-text: #b9770e;
+
+  --danger-bg: #fcebeb;
+  --danger-text: #a32d2d;
+  --danger-soft-bg: #fbebea;
+  --danger-soft-bg-hover: #f6d6d4;
+
+  --credito-bg: #fff3cd;
+  --credito-text: #7a5c00;
+
+  --divider-soft: rgba(0, 0, 0, 0.08);
+}
+
+:root[data-theme="oscuro"] {
+  color-scheme: dark;
+
+  --bg: #1a1b18;
+  --bg-card: #242521;
+  --bg-input: #2b2c27;
+  --bg-soft: #202119;
+
+  --text: #e8e5d9;
+  --text-secondary: #b6b3a5;
+  --text-muted: #8b8878;
+
+  --border: #3a3b34;
+  --border-input: #52534a;
+  --border-subtle: #333429;
+
+  --accent: #189970;
+  --accent-text: #4fd9ab;
+  --accent-contrast: #fff;
+  --accent-soft-bg: #1c3a30;
+  --accent-soft-bg-hover: #234739;
+
+  --warn-bg: #3a2e12;
+  --warn-text: #e2ab52;
+
+  --danger-bg: #3a1f1f;
+  --danger-text: #e17f7f;
+  --danger-soft-bg: #3a2020;
+  --danger-soft-bg-hover: #4a2727;
+
+  --credito-bg: #3a3110;
+  --credito-text: #e8c766;
+
+  --divider-soft: rgba(255, 255, 255, 0.08);
 }
 
 * {
@@ -9,8 +81,8 @@
 
 body {
   margin: 0;
-  background: #f1efe8;
-  color: #2c2c2a;
+  background: var(--bg);
+  color: var(--text);
 }
 
 .page {
@@ -51,7 +123,7 @@ body {
 .header h1 {
   font-size: 22px;
   font-weight: 600;
-  color: #0f6e56;
+  color: var(--accent-text);
   white-space: nowrap;
 }
 
@@ -72,13 +144,13 @@ body {
 .tasa input {
   width: 90px;
   padding: 6px 8px;
-  border: 1px solid #b4b2a9;
+  border: 1px solid var(--border-input);
   border-radius: 6px;
 }
 
 .card {
-  background: #fff;
-  border: 1px solid #d3d1c7;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
   border-radius: 12px;
   padding: 20px;
   margin-bottom: 20px;
@@ -97,12 +169,12 @@ body {
 }
 
 .modal-caja {
-  background: #fff;
+  background: var(--bg-card);
   border-radius: 12px;
   padding: 24px;
   max-width: 720px;
   width: 100%;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
 }
 
 .card h2 {
@@ -117,6 +189,7 @@ body {
   cursor: pointer;
   text-align: left;
   width: 100%;
+  color: inherit;
 }
 
 .form-row {
@@ -125,18 +198,21 @@ body {
   flex-wrap: wrap;
 }
 
-.form-row input {
+.form-row input,
+.form-row select {
   flex: 1;
   min-width: 120px;
   padding: 8px 10px;
-  border: 1px solid #b4b2a9;
+  border: 1px solid var(--border-input);
   border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--text);
 }
 
 .form-row button {
   padding: 8px 18px;
-  background: #0f6e56;
-  color: white;
+  background: var(--accent);
+  color: var(--accent-contrast);
   border: none;
   border-radius: 6px;
   cursor: pointer;
@@ -153,16 +229,16 @@ th,
 td {
   text-align: left;
   padding: 8px 10px;
-  border-bottom: 1px solid #eceae2;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 th {
-  color: #5f5e5a;
+  color: var(--text-secondary);
   font-weight: 500;
 }
 
 .empty {
-  color: #888780;
+  color: var(--text-muted);
   text-align: center;
   padding: 20px;
 }
@@ -190,16 +266,18 @@ th {
 .campo label {
   font-size: 12px;
   font-weight: 600;
-  color: #5f5e5a;
+  color: var(--text-secondary);
 }
 
 .campo input,
 .campo select {
   width: 100%;
   padding: 9px 10px;
-  border: 1px solid #b4b2a9;
+  border: 1px solid var(--border-input);
   border-radius: 6px;
   font-size: 14px;
+  background: var(--bg-input);
+  color: var(--text);
 }
 
 .campo-boton {
@@ -209,8 +287,8 @@ th {
 .campo-boton button {
   width: 100%;
   padding: 9px 10px;
-  background: #0f6e56;
-  color: #fff;
+  background: var(--accent);
+  color: var(--accent-contrast);
   border: none;
   border-radius: 6px;
   cursor: pointer;
@@ -234,8 +312,8 @@ th {
   height: 24px;
   flex-shrink: 0;
   border-radius: 50%;
-  background: #0f6e56;
-  color: #fff;
+  background: var(--accent);
+  color: var(--accent-contrast);
   font-size: 13px;
   font-weight: 700;
 }
@@ -253,18 +331,18 @@ th {
 }
 
 .aviso-producto-existente {
-  background: #e5f3ee;
-  color: #0f6e56;
+  background: var(--accent-soft-bg);
+  color: var(--accent-text);
 }
 
 .aviso-producto-nuevo {
-  background: #fdf0dc;
-  color: #b9770e;
+  background: var(--warn-bg);
+  color: var(--warn-text);
 }
 
 .previsualizacion {
-  background: #f1efe8;
-  border: 1px solid #d3d1c7;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 12px 14px;
   font-size: 14px;
@@ -290,7 +368,7 @@ th {
 }
 
 .stat-card-alerta .ticket-total {
-  color: #b9770e;
+  color: var(--warn-text);
 }
 
 /* --- Insignias de estado --- */
@@ -304,42 +382,42 @@ th {
 }
 
 .badge-ok {
-  background: #e5f3ee;
-  color: #0f6e56;
+  background: var(--accent-soft-bg);
+  color: var(--accent-text);
 }
 
 .badge-bajo {
-  background: #fdf0dc;
-  color: #b9770e;
+  background: var(--warn-bg);
+  color: var(--warn-text);
 }
 
 .badge-critico {
-  background: #fcebeb;
-  color: #a32d2d;
+  background: var(--danger-bg);
+  color: var(--danger-text);
   font-weight: 700;
 }
 
 .badge-agotado {
-  background: #fcebeb;
-  color: #a32d2d;
+  background: var(--danger-bg);
+  color: var(--danger-text);
 }
 
 .error {
-  color: #a32d2d;
-  background: #fcebeb;
+  color: var(--danger-text);
+  background: var(--danger-bg);
   padding: 10px 14px;
   border-radius: 8px;
 }
 
 .hint {
   font-size: 13px;
-  color: #888780;
+  color: var(--text-muted);
   margin-top: -8px;
 }
 
 .aviso-credito {
-  background: #fff3cd;
-  color: #7a5c00;
+  background: var(--credito-bg);
+  color: var(--credito-text);
   padding: 10px 14px;
   border-radius: 8px;
   margin-top: 8px;
@@ -361,18 +439,18 @@ th {
 
 .tabs button {
   padding: 8px 16px;
-  border: 1px solid #d3d1c7;
-  background: #fff;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
   border-radius: 8px;
   cursor: pointer;
   font-weight: 500;
-  color: #5f5e5a;
+  color: var(--text-secondary);
 }
 
 .tabs button.tab-activo {
-  background: #0f6e56;
-  color: #fff;
-  border-color: #0f6e56;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
 }
 
 .venta-layout {
@@ -385,8 +463,10 @@ th {
 .cant-input {
   width: 60px;
   padding: 4px 6px;
-  border: 1px solid #b4b2a9;
+  border: 1px solid var(--border-input);
   border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--text);
 }
 
 /* Antes TODO botón de texto (quitar, ver detalle, editar, cancelar,
@@ -395,9 +475,9 @@ th {
    verde de las acciones principales) y solo las acciones que de verdad
    eliminan/cancelan algo usan .link-btn-danger. */
 .link-btn {
-  background: #eaf3ef;
+  background: var(--accent-soft-bg);
   border: 1px solid transparent;
-  color: #0f6e56;
+  color: var(--accent-text);
   cursor: pointer;
   font-size: 12px;
   font-weight: 600;
@@ -408,16 +488,16 @@ th {
 }
 
 .link-btn:hover {
-  background: #d9ece3;
+  background: var(--accent-soft-bg-hover);
 }
 
 .link-btn-danger {
-  color: #a32d2d;
-  background: #fbebea;
+  color: var(--danger-text);
+  background: var(--danger-soft-bg);
 }
 
 .link-btn-danger:hover {
-  background: #f6d6d4;
+  background: var(--danger-soft-bg-hover);
 }
 
 .totales {
@@ -425,7 +505,7 @@ th {
   justify-content: space-between;
   margin-top: 14px;
   padding-top: 10px;
-  border-top: 1px solid #eceae2;
+  border-top: 1px solid var(--border-subtle);
   font-size: 14px;
 }
 
@@ -439,20 +519,20 @@ th {
   display: flex;
   justify-content: space-between;
   padding: 6px 0;
-  border-bottom: 1px solid #eceae2;
+  border-bottom: 1px solid var(--border-subtle);
   font-size: 14px;
 }
 
 .restante-pendiente {
-  color: #b9770e;
+  color: var(--warn-text);
 }
 
 .cobrar-btn {
   width: 100%;
   margin-top: 14px;
   padding: 12px;
-  background: #0f6e56;
-  color: #fff;
+  background: var(--accent);
+  color: var(--accent-contrast);
   border: none;
   border-radius: 8px;
   font-weight: 600;
@@ -472,8 +552,8 @@ th {
   flex: 1;
   min-width: 150px;
   padding: 14px 10px;
-  background: #0f6e56;
-  color: #fff;
+  background: var(--accent);
+  color: var(--accent-contrast);
   border: none;
   border-radius: 8px;
   font-weight: 600;
@@ -505,7 +585,7 @@ th {
 
 .ticket-meta {
   font-size: 13px;
-  color: #5f5e5a;
+  color: var(--text-secondary);
   margin-bottom: 12px;
 }
 
@@ -517,11 +597,9 @@ th {
 /* .imprimible: igual idea que .ticket (única región visible al
    imprimir), pero para vistas que conviven con la pantalla normal
    (catálogo, reportes) en vez de reemplazarla — por eso está oculta en
-   pantalla y solo aparece dentro de @media print. */
-.imprimible {
-  display: none;
-}
-
+   pantalla y solo aparece dentro de @media print. Impreso siempre en
+   claro/blanco (no tiene sentido gastar tinta imitando el tema oscuro de
+   pantalla), sin importar el tema activo. */
 @media print {
   body * {
     visibility: hidden;
@@ -532,6 +610,8 @@ th {
   .imprimible,
   .imprimible * {
     visibility: visible;
+    color: #2c2c2a;
+    background: #fff;
   }
 
   .ticket,
@@ -563,6 +643,10 @@ th {
   }
 }
 
+.imprimible {
+  display: none;
+}
+
 /* --- Pestañas de tickets abiertos (varias facturas a la vez) --- */
 
 .ticket-tabs {
@@ -576,14 +660,14 @@ th {
 .ticket-tab {
   display: flex;
   align-items: stretch;
-  border: 1px solid #d3d1c7;
+  border: 1px solid var(--border);
   border-radius: 8px;
   overflow: hidden;
-  background: #fff;
+  background: var(--bg-card);
 }
 
 .ticket-tab-activo {
-  border-color: #0f6e56;
+  border-color: var(--accent);
 }
 
 .ticket-tab-btn {
@@ -593,22 +677,22 @@ th {
   cursor: pointer;
   font-size: 13px;
   font-weight: 500;
-  color: #5f5e5a;
+  color: var(--text-secondary);
 }
 
 .ticket-tab-activo .ticket-tab-btn {
-  background: #0f6e56;
-  color: #fff;
+  background: var(--accent);
+  color: var(--accent-contrast);
 }
 
 .ticket-tab-cerrar {
   border: none;
-  border-left: 1px solid rgba(0, 0, 0, 0.08);
+  border-left: 1px solid var(--divider-soft);
   background: transparent;
   padding: 0 10px;
   cursor: pointer;
   font-size: 15px;
-  color: #a32d2d;
+  color: var(--danger-text);
 }
 
 .ticket-tab-activo .ticket-tab-cerrar {
@@ -617,17 +701,35 @@ th {
 }
 
 .ticket-tab-nuevo {
-  border: 1px dashed #b4b2a9;
+  border: 1px dashed var(--border-input);
   background: transparent;
   border-radius: 8px;
   padding: 8px 14px;
   cursor: pointer;
   font-size: 13px;
-  color: #5f5e5a;
+  color: var(--text-secondary);
   font-weight: 500;
 }
 
 .ticket-tab-nuevo:hover {
-  border-color: #0f6e56;
-  color: #0f6e56;
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+/* --- Botón de cambiar tema (claro/oscuro), en el encabezado --- */
+
+.tema-btn {
+  background: transparent;
+  border: 1px solid var(--border-input);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 999px;
+}
+
+.tema-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent-text);
 }

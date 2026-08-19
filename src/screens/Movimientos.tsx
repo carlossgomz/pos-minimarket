@@ -288,8 +288,8 @@ export default function Movimientos({ config }: { config: ConfigRow }) {
                 top: "calc(100% + 4px)",
                 left: 0,
                 right: 0,
-                background: "#fff",
-                border: "1px solid #d3d1c7",
+                background: "var(--bg-card)",
+                border: "1px solid var(--border)",
                 borderRadius: 8,
                 listStyle: "none",
                 margin: 0,
@@ -312,7 +312,7 @@ export default function Movimientos({ config }: { config: ConfigRow }) {
                   }}
                 >
                   <span>{p.nombre}</span>
-                  <span style={{ color: "#5f5e5a" }}>{p.codigo_barra} · stock {formatearStock(p.stock_actual)}</span>
+                  <span style={{ color: "var(--text-secondary)" }}>{p.codigo_barra} · stock {formatearStock(p.stock_actual)}</span>
                 </li>
               ))}
             </ul>
@@ -452,8 +452,8 @@ export default function Movimientos({ config }: { config: ConfigRow }) {
                     top: "calc(100% + 4px)",
                     left: 0,
                     right: 0,
-                    background: "#fff",
-                    border: "1px solid #d3d1c7",
+                    background: "var(--bg-card)",
+                    border: "1px solid var(--border)",
                     borderRadius: 8,
                     listStyle: "none",
                     margin: 0,
@@ -476,7 +476,7 @@ export default function Movimientos({ config }: { config: ConfigRow }) {
                       }}
                     >
                       <span>{p.nombre}</span>
-                      <span style={{ color: "#5f5e5a" }}>{p.codigo_barra} · stock {formatearStock(p.stock_actual)}</span>
+                      <span style={{ color: "var(--text-secondary)" }}>{p.codigo_barra} · stock {formatearStock(p.stock_actual)}</span>
                     </li>
                   ))}
                 </ul>

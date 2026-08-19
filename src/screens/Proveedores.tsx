@@ -93,7 +93,7 @@ export default function Proveedores() {
           placeholder="Buscar por nombre o RIF"
           value={busqueda}
           onChange={(e) => setBusqueda(e.target.value)}
-          style={{ marginBottom: 10, width: "100%", padding: "8px 10px", border: "1px solid #b4b2a9", borderRadius: 6 }}
+          style={{ marginBottom: 10, width: "100%", padding: "8px 10px", border: "1px solid var(--border-input)", borderRadius: 6 }}
         />
         <table>
           <thead>

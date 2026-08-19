@@ -306,7 +306,7 @@ export default function Reportes({ config }: { config: ConfigRow }) {
             <p className="hint" style={{ margin: 0 }}>Capital inventariado</p>
             <p className="ticket-total" style={{ margin: 0 }}>
               USD {capitalInventarioUsd.toFixed(2)}{" "}
-              <span style={{ fontWeight: 400, fontSize: 13, color: "#5f5e5a" }}>
+              <span style={{ fontWeight: 400, fontSize: 13, color: "var(--text-secondary)" }}>
                 (Bs {(capitalInventarioUsd * config.tasa_cambio_dia).toFixed(2)})
               </span>
             </p>
@@ -315,7 +315,7 @@ export default function Reportes({ config }: { config: ConfigRow }) {
             <p className="hint" style={{ margin: 0 }}>Cuentas por pagar (proveedores)</p>
             <p className="ticket-total" style={{ margin: 0 }}>
               USD {cuentasPorPagarUsd.toFixed(2)}{" "}
-              <span style={{ fontWeight: 400, fontSize: 13, color: "#5f5e5a" }}>
+              <span style={{ fontWeight: 400, fontSize: 13, color: "var(--text-secondary)" }}>
                 (Bs {(cuentasPorPagarUsd * config.tasa_cambio_dia).toFixed(2)})
               </span>
             </p>
@@ -327,7 +327,7 @@ export default function Reportes({ config }: { config: ConfigRow }) {
               style={{ margin: 0, color: capitalInventarioUsd - cuentasPorPagarUsd >= 0 ? "#2e7d32" : "#a32d2d" }}
             >
               USD {(capitalInventarioUsd - cuentasPorPagarUsd).toFixed(2)}{" "}
-              <span style={{ fontWeight: 400, fontSize: 13, color: "#5f5e5a" }}>
+              <span style={{ fontWeight: 400, fontSize: 13, color: "var(--text-secondary)" }}>
                 (Bs {((capitalInventarioUsd - cuentasPorPagarUsd) * config.tasa_cambio_dia).toFixed(2)})
               </span>
             </p>
@@ -431,11 +431,11 @@ export default function Reportes({ config }: { config: ConfigRow }) {
         )}
         <div className="form-row" style={{ marginTop: 8 }}>
           <span style={{ fontSize: 13 }}>
-            <span style={{ display: "inline-block", width: 10, height: 10, background: "#0f6e56", marginRight: 6, borderRadius: 2 }} />
+            <span style={{ display: "inline-block", width: 10, height: 10, background: "var(--accent)", marginRight: 6, borderRadius: 2 }} />
             Ventas Bs
           </span>
           <span style={{ fontSize: 13 }}>
-            <span style={{ display: "inline-block", width: 10, height: 10, background: "#b9770e", marginRight: 6, borderRadius: 2 }} />
+            <span style={{ display: "inline-block", width: 10, height: 10, background: "var(--warn-text)", marginRight: 6, borderRadius: 2 }} />
             Ganancia Bs
           </span>
         </div>

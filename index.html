@@ -4,6 +4,14 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>POS Minimarket</title>
+    <script>
+      // Se aplica ANTES de que React monte, para no parpadear en claro un
+      // instante al abrir la app (ver App.tsx, misma clave de localStorage).
+      (function () {
+        var t = localStorage.getItem("pos-tema");
+        document.documentElement.dataset.theme = t === "claro" ? "claro" : "oscuro";
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

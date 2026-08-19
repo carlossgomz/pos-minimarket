@@ -42,8 +42,24 @@ type Tab =
 // roles.
 const SECCIONES_CAJERO = new Set<Tab>(["venta", "facturas", "clientes", "cuentas", "inventario", "cuadre"]);
 
+// Tema claro/oscuro — se guarda en localStorage (por PC, no por usuario:
+// no tiene sentido que cambie de tema al cerrar sesión). Por defecto queda
+// en oscuro: la pantalla clara resultó demasiado brillante para uso
+// prolongado en la tienda.
+const TEMA_KEY = "pos-tema";
+function temaGuardado(): "claro" | "oscuro" {
+  const v = localStorage.getItem(TEMA_KEY);
+  return v === "claro" ? "claro" : "oscuro";
+}
+
 export default function App() {
   const [tab, setTab] = useState<Tab>("venta");
+  const [tema, setTema] = useState<"claro" | "oscuro">(temaGuardado);
+  useEffect(() => {
+    document.documentElement.dataset.theme = tema;
+    localStorage.setItem(TEMA_KEY, tema);
+  }, [tema]);
+
   const [config, setConfig] = useState<ConfigRow | null>(null);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -393,7 +409,7 @@ export default function App() {
             defaultValue={config.tasa_cambio_dia}
             onBlur={(e) => actualizarTasa(Number(e.target.value))}
           />
-          <span style={{ color: "#5f5e5a" }}>
+          <span style={{ color: "var(--text-secondary)" }}>
             {usuarioActual.nombre} · {esAdmin ? "Admin" : "Cajero"}
           </span>
           {estadoConexion && (
@@ -406,7 +422,7 @@ export default function App() {
             <button
               type="button"
               className="link-btn"
-              style={{ color: "#b9770e" }}
+              style={{ color: "var(--warn-text)" }}
               onClick={() => setMostrarPendientesCodigo(true)}
             >
               🏷 {pendientesCodigo} sin código de barras
@@ -416,7 +432,7 @@ export default function App() {
             <button
               type="button"
               className="link-btn"
-              style={{ color: "#a32d2d" }}
+              style={{ color: "var(--danger-text)" }}
               onClick={() => {
                 setAbrirInventarioFiltrado(true);
                 setTab("inventario");
@@ -449,8 +465,16 @@ export default function App() {
             </button>
           )}
           {errorActualizacion && (
-            <span style={{ color: "#a32d2d", fontSize: 12 }}>{errorActualizacion}</span>
+            <span style={{ color: "var(--danger-text)", fontSize: 12 }}>{errorActualizacion}</span>
           )}
+          <button
+            type="button"
+            className="tema-btn"
+            onClick={() => setTema((t) => (t === "oscuro" ? "claro" : "oscuro"))}
+            title="Cambiar entre tema claro y oscuro"
+          >
+            {tema === "oscuro" ? "☀ Claro" : "🌙 Oscuro"}
+          </button>
           <button
             className="link-btn"
             onClick={() => {

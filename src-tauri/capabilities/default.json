@@ -21,6 +21,7 @@
     "allow-registrar-abono-cliente",
     "allow-registrar-abono-cliente-total",
     "allow-registrar-pago-proveedor",
+    "allow-ajustar-factura-compra",
     "allow-registrar-consumo-interno",
     "allow-guardar-factura-compra",
     "allow-editar-factura-compra",

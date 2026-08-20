@@ -20,6 +20,7 @@ fn main() {
                 "registrar_abono_cliente",
                 "registrar_abono_cliente_total",
                 "registrar_pago_proveedor",
+                "ajustar_factura_compra",
                 "registrar_consumo_interno",
                 "guardar_factura_compra",
                 "editar_factura_compra",

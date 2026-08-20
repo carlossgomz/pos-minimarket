@@ -396,6 +396,14 @@ function CuentasPorPagar({ config }: { config: ConfigRow }) {
   const [referencia, setReferencia] = useState("");
   const [mensaje, setMensaje] = useState<string | null>(null);
 
+  // Ajustar el total de una factura ya creada — para cuando lo que
+  // realmente hay que pagarle al proveedor cambió (producto devuelto,
+  // descuento de último momento) y ya no coincide con el total original.
+  const [facturaAjuste, setFacturaAjuste] = useState<FacturaPendiente | null>(null);
+  const [nuevoMontoAjuste, setNuevoMontoAjuste] = useState("");
+  const [motivoAjuste, setMotivoAjuste] = useState("");
+  const [mensajeAjuste, setMensajeAjuste] = useState<string | null>(null);
+
   async function cargarProveedores() {
     const db = await getDb();
     const rows = await db.select<ProveedorDeudor[]>(
@@ -481,15 +489,56 @@ function CuentasPorPagar({ config }: { config: ConfigRow }) {
     setMontoBs("");
     setReferencia("");
     await cargarProveedores();
-    if (proveedorAbierto) {
-      const db2 = await getDb();
-      const rows = await db2.select<FacturaPendiente[]>(
-        `SELECT id, numero_factura, fecha, moneda, tasa_cambio_dia, monto_total_usd, monto_pagado_usd, estado
-         FROM facturas_compra WHERE proveedor_id = $1 AND estado != 'PAGADA' ORDER BY fecha`,
-        [proveedorAbierto]
-      );
-      setFacturas(rows);
+    await recargarFacturasProveedor();
+  }
+
+  async function recargarFacturasProveedor() {
+    if (!proveedorAbierto) return;
+    const db2 = await getDb();
+    const rows = await db2.select<FacturaPendiente[]>(
+      `SELECT id, numero_factura, fecha, moneda, tasa_cambio_dia, monto_total_usd, monto_pagado_usd, estado
+       FROM facturas_compra WHERE proveedor_id = $1 AND estado != 'PAGADA' ORDER BY fecha`,
+      [proveedorAbierto]
+    );
+    setFacturas(rows);
+  }
+
+  function empezarAjuste(f: FacturaPendiente) {
+    setFacturaAjuste(f);
+    setNuevoMontoAjuste(f.monto_total_usd.toFixed(2));
+    setMotivoAjuste("");
+    setMensajeAjuste(null);
+  }
+
+  async function confirmarAjuste() {
+    if (!facturaAjuste) return;
+    const nuevoTotal = Number(nuevoMontoAjuste);
+    if (nuevoMontoAjuste === "" || isNaN(nuevoTotal) || nuevoTotal < 0) {
+      setMensajeAjuste("Indica el monto total real de la factura (puede ser 0).");
+      return;
     }
+    if (!motivoAjuste.trim()) {
+      setMensajeAjuste("Indica el motivo del ajuste (ej. producto devuelto, descuento).");
+      return;
+    }
+    try {
+      await invoke("ajustar_factura_compra", {
+        input: {
+          factura_compra_id: facturaAjuste.id,
+          nuevo_monto_total_usd: nuevoTotal,
+          motivo: motivoAjuste.trim(),
+        },
+      });
+    } catch (e) {
+      setMensajeAjuste(`No se pudo ajustar la factura: ${String(e)}`);
+      return;
+    }
+
+    setFacturaAjuste(null);
+    setNuevoMontoAjuste("");
+    setMotivoAjuste("");
+    await cargarProveedores();
+    await recargarFacturasProveedor();
   }
 
   const totalGeneralUsd = proveedores.reduce((acc, p) => acc + p.total_pendiente_usd, 0);
@@ -570,6 +619,9 @@ function CuentasPorPagar({ config }: { config: ConfigRow }) {
                                 <button className="link-btn" onClick={() => empezarAbono(f)}>
                                   registrar pago
                                 </button>
+                                <button className="link-btn" onClick={() => empezarAjuste(f)}>
+                                  ajustar monto
+                                </button>
                               </td>
                             </tr>
                           );
@@ -622,6 +674,38 @@ function CuentasPorPagar({ config }: { config: ConfigRow }) {
           {mensaje && <p className="error">{mensaje}</p>}
         </div>
       )}
+
+      {facturaAjuste && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <h2>Ajustar factura {facturaAjuste.numero_factura}</h2>
+          <p className="hint">
+            Total original: USD {facturaAjuste.monto_total_usd.toFixed(2)}
+            {facturaAjuste.monto_pagado_usd > 0 && ` — ya pagado: USD ${facturaAjuste.monto_pagado_usd.toFixed(2)}`}.
+            Escribe el monto REAL que hay que pagarle al proveedor (ej. si se devolvió un producto
+            o hubo un descuento) — la diferencia queda registrada con el motivo, no se pierde.
+          </p>
+          <div className="form-row">
+            <input
+              placeholder="Nuevo monto total (USD)"
+              type="number"
+              step="0.01"
+              value={nuevoMontoAjuste}
+              onChange={(e) => setNuevoMontoAjuste(e.target.value)}
+            />
+            <input
+              placeholder="Motivo (ej. producto devuelto)"
+              value={motivoAjuste}
+              onChange={(e) => setMotivoAjuste(e.target.value)}
+              style={{ flex: 2 }}
+            />
+            <button onClick={confirmarAjuste}>Confirmar ajuste</button>
+            <button className="link-btn" onClick={() => setFacturaAjuste(null)}>
+              cancelar
+            </button>
+          </div>
+          {mensajeAjuste && <p className="error">{mensajeAjuste}</p>}
+        </div>
+      )}
     </div>
   );
 }
@@ -651,6 +735,13 @@ type PagoProveedorDetalle = {
   created_at: string;
 };
 
+type AjusteFacturaDetalle = {
+  monto_anterior_usd: number;
+  monto_nuevo_usd: number;
+  motivo: string;
+  created_at: string;
+};
+
 // Historial de facturas de proveedor YA pagadas por completo — separado de
 // "Por pagar" (que solo lista las pendientes), para poder revisar y
 // reimprimir lo que ya se saldó sin mezclarlo con la deuda actual.
@@ -660,6 +751,7 @@ function FacturasPagadas() {
   const [detalleAbierto, setDetalleAbierto] = useState<string | null>(null);
   const [items, setItems] = useState<ItemFacturaCompraDetalle[]>([]);
   const [pagos, setPagos] = useState<PagoProveedorDetalle[]>([]);
+  const [ajustes, setAjustes] = useState<AjusteFacturaDetalle[]>([]);
 
   async function cargar() {
     const db = await getDb();
@@ -687,6 +779,7 @@ function FacturasPagadas() {
       setDetalleAbierto(null);
       setItems([]);
       setPagos([]);
+      setAjustes([]);
       return;
     }
     setDetalleAbierto(f.id);
@@ -704,6 +797,12 @@ function FacturasPagadas() {
       [f.id]
     );
     setPagos(pagosRows);
+    const ajustesRows = await db.select<AjusteFacturaDetalle[]>(
+      `SELECT monto_anterior_usd, monto_nuevo_usd, motivo, created_at
+       FROM ajustes_factura_compra WHERE factura_compra_id = $1 ORDER BY created_at`,
+      [f.id]
+    );
+    setAjustes(ajustesRows);
   }
 
   return (
@@ -812,6 +911,31 @@ function FacturasPagadas() {
                           )}
                         </tbody>
                       </table>
+                      {ajustes.length > 0 && (
+                        <>
+                          <p className="hint">Ajustes al monto</p>
+                          <table>
+                            <thead>
+                              <tr>
+                                <th>Fecha</th>
+                                <th>Monto anterior</th>
+                                <th>Monto nuevo</th>
+                                <th>Motivo</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {ajustes.map((a, i) => (
+                                <tr key={i}>
+                                  <td>{new Date(a.created_at).toLocaleDateString("es-VE")}</td>
+                                  <td>USD {a.monto_anterior_usd.toFixed(2)}</td>
+                                  <td>USD {a.monto_nuevo_usd.toFixed(2)}</td>
+                                  <td>{a.motivo}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </>
+                      )}
                     </td>
                   </tr>
                 )}

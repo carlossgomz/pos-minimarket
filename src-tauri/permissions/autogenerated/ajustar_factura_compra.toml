@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-ajustar-factura-compra"
+description = "Enables the ajustar_factura_compra command without any pre-configured scope."
+commands.allow = ["ajustar_factura_compra"]
+
+[[permission]]
+identifier = "deny-ajustar-factura-compra"
+description = "Denies the ajustar_factura_compra command without any pre-configured scope."
+commands.deny = ["ajustar_factura_compra"]

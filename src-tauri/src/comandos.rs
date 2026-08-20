@@ -1186,6 +1186,90 @@ pub async fn registrar_pago_proveedor(app: tauri::AppHandle, input: PagoProveedo
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+pub struct AjustarFacturaCompraInput {
+    factura_compra_id: String,
+    // El monto REAL que hay que pagar, no la diferencia — más fácil de
+    // teclear cuando ya se sabe "esta factura en realidad quedó en 23".
+    nuevo_monto_total_usd: f64,
+    motivo: String,
+}
+
+/// Corrige el monto total de una factura de proveedor después de creada —
+/// para cuando lo que realmente hay que pagarle al proveedor cambió (se
+/// devolvió un producto, un descuento de último momento, etc.) y ya no
+/// coincide con el total original. Sin esto, la factura queda "pendiente"
+/// para siempre por una diferencia que ya no existe. No toca el stock ni
+/// los ítems de la factura — solo el monto a pagar; si hace falta corregir
+/// también las cantidades/productos, se hace aparte desde Compras (mientras
+/// la factura siga "editable") o con un ajuste de stock manual.
+#[tauri::command]
+pub async fn ajustar_factura_compra(app: tauri::AppHandle, input: AjustarFacturaCompraInput) -> Result<(), String> {
+    if input.nuevo_monto_total_usd < 0.0 {
+        return Err("El nuevo monto no puede ser negativo.".to_string());
+    }
+    if input.motivo.trim().is_empty() {
+        return Err("Indica el motivo del ajuste (ej. producto devuelto, descuento).".to_string());
+    }
+
+    let conn = conexion(&app).await?;
+    let tx = conn.transaction().await.map_err(|e| e.to_string())?;
+
+    let fila = tx
+        .query(
+            "SELECT monto_total_usd, monto_pagado_usd FROM facturas_compra WHERE id = ?1",
+            libsql::params![input.factura_compra_id.clone()],
+        )
+        .await
+        .map_err(|e| e.to_string())?
+        .next()
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Esa factura no existe.".to_string())?;
+    let total_anterior: f64 = fila.get(0).map_err(|e| e.to_string())?;
+    let pagado: f64 = fila.get(1).map_err(|e| e.to_string())?;
+
+    if input.nuevo_monto_total_usd < pagado - EPS {
+        return Err(format!(
+            "El nuevo monto (USD {:.2}) no puede ser menor a lo que ya se pagó (USD {:.2}).",
+            input.nuevo_monto_total_usd, pagado
+        ));
+    }
+
+    let saldada = input.nuevo_monto_total_usd - pagado <= EPS;
+    let nuevo_estado = if saldada {
+        "PAGADA"
+    } else if pagado > EPS {
+        "PARCIAL"
+    } else {
+        "PENDIENTE"
+    };
+
+    tx.execute(
+        "UPDATE facturas_compra SET monto_total_usd = ?1, estado = ?2 WHERE id = ?3",
+        libsql::params![input.nuevo_monto_total_usd, nuevo_estado, input.factura_compra_id.clone()],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    tx.execute(
+        "INSERT INTO ajustes_factura_compra (id, factura_compra_id, monto_anterior_usd, monto_nuevo_usd, motivo, created_at)
+         VALUES (lower(hex(randomblob(16))), ?1, ?2, ?3, ?4, ?5)",
+        libsql::params![
+            input.factura_compra_id.clone(),
+            total_anterior,
+            input.nuevo_monto_total_usd,
+            input.motivo.trim().to_string(),
+            ahora_venezuela(),
+        ],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    tx.commit().await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ItemConsumoInternoInput {
     producto_id: String,
     cantidad: f64,

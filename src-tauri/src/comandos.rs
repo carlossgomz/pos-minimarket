@@ -266,6 +266,26 @@ pub(crate) async fn confirmar_venta_interna(
     conn: &libsql::Connection,
     input: &ConfirmarVentaInput,
 ) -> Result<ConfirmarVentaOutput, String> {
+    // Idempotencia: si ya existe una venta con este id, no se inserta de
+    // nuevo — se devuelve el ticket que ya quedó guardado. Cubre el caso
+    // de una conexión que se corta justo después de que el guardado
+    // terminó del lado del servidor pero antes de que la respuesta
+    // llegara a la caja: la caja ve un error en rojo y el cajero
+    // reintenta, pero el frontend reutiliza el id del ticket abierto en
+    // cada reintento (ver activo.id en Venta.tsx), así que acá se detecta
+    // que esa venta específica ya se guardó en vez de triplicarla.
+    let ya_existe = conn
+        .query("SELECT numero_ticket FROM ventas WHERE id = ?1", libsql::params![input.id.clone()])
+        .await
+        .map_err(|e| e.to_string())?
+        .next()
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Some(fila) = ya_existe {
+        let numero_ticket: String = fila.get(0).map_err(|e| e.to_string())?;
+        return Ok(ConfirmarVentaOutput { numero_ticket, sin_conexion: false });
+    }
+
     let tx = conn.transaction().await.map_err(|e| e.to_string())?;
 
     let fila = tx
@@ -652,6 +672,10 @@ pub async fn eliminar_venta(app: tauri::AppHandle, venta_id: String) -> Result<(
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct AjustarStockInput {
+    /// Generado por el frontend UNA vez por intento y reutilizado en cada
+    /// reintento (ver Movimientos.tsx) — sirve para detectar si este
+    /// mismo ajuste ya se guardó, igual que en confirmar_venta_interna.
+    id: String,
     producto_id: String,
     /// "ENTRADA" o "SALIDA". Igual que en Compras/Venta, la cantidad
     /// siempre se guarda en movimientos_inventario como magnitud
@@ -681,6 +705,21 @@ async fn ajustar_stock_interna(conn: &libsql::Connection, input: &AjustarStockIn
         return Err("Indica un motivo para el movimiento.".to_string());
     }
 
+    // Idempotencia: mismo criterio que confirmar_venta_interna — si la
+    // conexión se corta justo después de guardar pero antes de que la
+    // respuesta llegara, un reintento con el mismo id no debe volver a
+    // sumar/restar el stock.
+    let ya_existe = conn
+        .query("SELECT 1 FROM movimientos_inventario WHERE referencia = ?1", libsql::params![input.id.clone()])
+        .await
+        .map_err(|e| e.to_string())?
+        .next()
+        .await
+        .map_err(|e| e.to_string())?;
+    if ya_existe.is_some() {
+        return Ok(());
+    }
+
     let tx = conn.transaction().await.map_err(|e| e.to_string())?;
 
     let existe = tx
@@ -708,9 +747,16 @@ async fn ajustar_stock_interna(conn: &libsql::Connection, input: &AjustarStockIn
     }
 
     tx.execute(
-        "INSERT INTO movimientos_inventario (id, producto_id, tipo, cantidad, motivo, created_at)
-         VALUES (lower(hex(randomblob(16))), ?1, ?2, ?3, ?4, ?5)",
-        libsql::params![input.producto_id.clone(), input.tipo.clone(), input.cantidad, motivo, input.fecha_hora.clone()],
+        "INSERT INTO movimientos_inventario (id, producto_id, tipo, cantidad, motivo, referencia, created_at)
+         VALUES (lower(hex(randomblob(16))), ?1, ?2, ?3, ?4, ?5, ?6)",
+        libsql::params![
+            input.producto_id.clone(),
+            input.tipo.clone(),
+            input.cantidad,
+            motivo,
+            input.id.clone(),
+            input.fecha_hora.clone()
+        ],
     )
     .await
     .map_err(|e| e.to_string())?;
@@ -743,6 +789,12 @@ pub async fn ajustar_stock(app: tauri::AppHandle, input: AjustarStockInput) -> R
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct DesglosarProductoInput {
+    /// Generado por el frontend UNA vez por intento y reutilizado en cada
+    /// reintento (ver Movimientos.tsx) — sirve para detectar si este
+    /// mismo desglose ya se guardó, igual que en confirmar_venta_interna.
+    /// También se usa como "referencia" para vincular los dos movimientos
+    /// de inventario que genera (salida del origen + entrada al destino).
+    id: String,
     producto_origen_id: String,
     producto_destino_id: String,
     /// Cuántas unidades del producto origen se rompen (ej. 1 paquete).
@@ -776,6 +828,18 @@ async fn desglosar_producto_interna(conn: &libsql::Connection, input: &Desglosar
     }
     let motivo = input.motivo.trim();
     let motivo = if motivo.is_empty() { "Desglose" } else { motivo };
+
+    // Idempotencia: mismo criterio que confirmar_venta_interna.
+    let ya_existe = conn
+        .query("SELECT 1 FROM movimientos_inventario WHERE referencia = ?1", libsql::params![input.id.clone()])
+        .await
+        .map_err(|e| e.to_string())?
+        .next()
+        .await
+        .map_err(|e| e.to_string())?;
+    if ya_existe.is_some() {
+        return Ok(());
+    }
 
     let tx = conn.transaction().await.map_err(|e| e.to_string())?;
 
@@ -870,7 +934,7 @@ async fn desglosar_producto_interna(conn: &libsql::Connection, input: &Desglosar
     .await
     .map_err(|e| e.to_string())?;
 
-    let referencia = Uuid::new_v4().simple().to_string();
+    let referencia = input.id.clone();
 
     tx.execute(
         "INSERT INTO movimientos_inventario (id, producto_id, tipo, cantidad, motivo, referencia, created_at)
@@ -1278,6 +1342,11 @@ pub struct ItemConsumoInternoInput {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ConsumoInternoInput {
+    /// Generado por el frontend UNA vez por intento y reutilizado en cada
+    /// reintento (ver Venta.tsx) — se guarda como "referencia" en cada
+    /// movimiento de este lote, para detectar si ya se guardó, igual que
+    /// en confirmar_venta_interna.
+    id: String,
     fecha_hora: String,
     items: Vec<ItemConsumoInternoInput>,
 }
@@ -1294,6 +1363,18 @@ async fn registrar_consumo_interno_interna(
 ) -> Result<(), String> {
     if input.items.is_empty() {
         return Err("No hay productos en la lista de consumo interno.".to_string());
+    }
+
+    // Idempotencia: mismo criterio que confirmar_venta_interna.
+    let ya_existe = conn
+        .query("SELECT 1 FROM movimientos_inventario WHERE referencia = ?1", libsql::params![input.id.clone()])
+        .await
+        .map_err(|e| e.to_string())?
+        .next()
+        .await
+        .map_err(|e| e.to_string())?;
+    if ya_existe.is_some() {
+        return Ok(());
     }
 
     let tx = conn.transaction().await.map_err(|e| e.to_string())?;
@@ -1318,9 +1399,9 @@ async fn registrar_consumo_interno_interna(
         consumir_stock_fifo(&tx, &item.producto_id, item.cantidad).await?;
 
         tx.execute(
-            "INSERT INTO movimientos_inventario (id, producto_id, tipo, cantidad, motivo, created_at)
-             VALUES (lower(hex(randomblob(16))), ?1, 'SALIDA', ?2, ?3, ?4)",
-            libsql::params![item.producto_id.clone(), item.cantidad, motivo, input.fecha_hora.clone()],
+            "INSERT INTO movimientos_inventario (id, producto_id, tipo, cantidad, motivo, referencia, created_at)
+             VALUES (lower(hex(randomblob(16))), ?1, 'SALIDA', ?2, ?3, ?4, ?5)",
+            libsql::params![item.producto_id.clone(), item.cantidad, motivo, input.id.clone(), input.fecha_hora.clone()],
         )
         .await
         .map_err(|e| e.to_string())?;

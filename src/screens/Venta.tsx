@@ -227,6 +227,12 @@ export default function Venta({
   const [mostrarDropdownConsumo, setMostrarDropdownConsumo] = useState(false);
   const [guardandoConsumo, setGuardandoConsumo] = useState(false);
   const [mensajeConsumo, setMensajeConsumo] = useState<string | null>(null);
+  // Id del lote de consumo interno actual — se genera una sola vez y se
+  // reutiliza en cada reintento (no en cada click) para que
+  // registrar_consumo_interno_interna pueda detectar un reintento tras un
+  // error de conexión y no duplicar los movimientos. Se limpia solo
+  // cuando el guardado termina bien.
+  const idConsumoRef = useRef<string | null>(null);
 
   // --- Avances de efectivo del día (el cliente pide efectivo, se le cobra
   // un monto mayor por otro método — la diferencia es la comisión). Cada
@@ -520,6 +526,10 @@ export default function Venta({
     }
 
     setGuardandoConsumo(true);
+    // Se genera solo la primera vez — un reintento tras un error de
+    // conexión reutiliza el mismo id, para que el backend pueda detectar
+    // que este lote ya se guardó y no lo duplique.
+    if (!idConsumoRef.current) idConsumoRef.current = crypto.randomUUID();
     let sinConexion = false;
     try {
       // Igual que confirmar_venta y ajustar_stock: todo se descuenta en
@@ -527,6 +537,7 @@ export default function Venta({
       // Si no hay conexión, queda en la cola local y se sincroniza sola.
       const resultado = await invoke<{ sin_conexion: boolean }>("registrar_consumo_interno", {
         input: {
+          id: idConsumoRef.current,
           fecha_hora: fechaHoraVenezuela(),
           items: consumoInterno.map((l) => ({
             producto_id: l.producto_id,
@@ -541,6 +552,7 @@ export default function Venta({
       setGuardandoConsumo(false);
       return;
     }
+    idConsumoRef.current = null;
 
     setConsumoInterno([]);
     setGuardandoConsumo(false);
@@ -1015,7 +1027,13 @@ export default function Venta({
     const carritoConRecargo = lineaRecargoDelivery ? [...carrito, lineaRecargoDelivery] : carrito;
 
     setGuardando(true);
-    const id = crypto.randomUUID();
+    // El id de la venta es el del TICKET (estable mientras el ticket sigue
+    // abierto), no uno nuevo por intento — si la conexión se corta justo
+    // después de que el guardado terminó del otro lado pero antes de que
+    // la respuesta llegara, el cajero ve un error en rojo y reintenta
+    // sobre el mismo ticket; con el mismo id, confirmar_venta_interna
+    // detecta que esa venta ya se guardó y no la triplica.
+    const id = activo.id;
     const fechaHora = fechaHoraVenezuela();
 
     // Si se combinó la deuda vieja, primero se salda (parcial o total)

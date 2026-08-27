@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getDb } from "../db";
 import { ConfigRow, MovimientoInventario, ProductoInventario } from "../types";
@@ -20,6 +20,11 @@ export default function Movimientos({ config }: { config: ConfigRow }) {
   const [motivo, setMotivo] = useState("");
   const [guardando, setGuardando] = useState(false);
   const [mensaje, setMensaje] = useState<string | null>(null);
+  // Id del intento actual — se genera una sola vez y se reutiliza en cada
+  // reintento (no en cada click) para que ajustar_stock_interna pueda
+  // detectar un reintento tras un error de conexión y no duplicar el
+  // movimiento. Se limpia solo cuando el guardado termina bien.
+  const idAjusteRef = useRef<string | null>(null);
 
   const [movimientos, setMovimientos] = useState<MovimientoInventario[]>([]);
   const [totales, setTotales] = useState<{ entradas: number; salidas: number } | null>(null);
@@ -44,6 +49,8 @@ export default function Movimientos({ config }: { config: ConfigRow }) {
   const [motivoDesglose, setMotivoDesglose] = useState("");
   const [guardandoDesglose, setGuardandoDesglose] = useState(false);
   const [mensajeDesglose, setMensajeDesglose] = useState<string | null>(null);
+  // Mismo criterio que idAjusteRef arriba.
+  const idDesgloseRef = useRef<string | null>(null);
 
   // Búsqueda de producto en vivo, igual que en Venta.
   useEffect(() => {
@@ -176,9 +183,14 @@ export default function Movimientos({ config }: { config: ConfigRow }) {
       return;
     }
     setGuardandoDesglose(true);
+    // Se genera solo la primera vez — un reintento tras un error de
+    // conexión reutiliza el mismo id, para que el backend pueda detectar
+    // que este desglose ya se guardó y no lo duplique.
+    if (!idDesgloseRef.current) idDesgloseRef.current = crypto.randomUUID();
     try {
       await invoke("desglosar_producto", {
         input: {
+          id: idDesgloseRef.current,
           producto_origen_id: productoSeleccionado.id,
           producto_destino_id: productoDestino.id,
           cantidad_origen: cantOrigen,
@@ -192,6 +204,7 @@ export default function Movimientos({ config }: { config: ConfigRow }) {
       setGuardandoDesglose(false);
       return;
     }
+    idDesgloseRef.current = null;
 
     const db = await getDb();
     const rows = await db.select<ProductoInventario[]>(
@@ -221,9 +234,14 @@ export default function Movimientos({ config }: { config: ConfigRow }) {
       return;
     }
     setGuardando(true);
+    // Se genera solo la primera vez — un reintento tras un error de
+    // conexión reutiliza el mismo id, para que el backend pueda detectar
+    // que este ajuste ya se guardó y no lo duplique.
+    if (!idAjusteRef.current) idAjusteRef.current = crypto.randomUUID();
     try {
       await invoke("ajustar_stock", {
         input: {
+          id: idAjusteRef.current,
           producto_id: productoSeleccionado.id,
           tipo,
           cantidad: cant,
@@ -236,6 +254,7 @@ export default function Movimientos({ config }: { config: ConfigRow }) {
       setGuardando(false);
       return;
     }
+    idAjusteRef.current = null;
 
     // refrescar el stock del producto seleccionado (cambió) y su historial
     const db = await getDb();

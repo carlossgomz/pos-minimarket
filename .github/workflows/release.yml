@@ -27,19 +27,44 @@ jobs:
         with:
           script: |
             const tag = context.ref.replace('refs/tags/', '');
+
+            // La lista de cambios se arma sola a partir de los commits
+            // desde el release anterior — es lo que la app muestra en la
+            // ventanita de "qué hay de nuevo" tras actualizar (ver
+            // update.body en App.tsx). NO se usa generate_release_notes de
+            // GitHub porque arma "What's Changed" a partir de Pull
+            // Requests, y este repo empuja directo a main sin PRs —
+            // quedaría siempre vacío. Se excluye el propio commit
+            // "vX.Y.Z: ..." del bump de versión, ya que ese texto ya está
+            // implícito en el título de la ventanita.
+            const releases = await github.rest.repos.listReleases({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 1,
+            });
+            const anterior = releases.data[0]?.tag_name;
+            let body = '';
+            if (anterior) {
+              const comparacion = await github.rest.repos.compareCommitsWithBasehead({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                basehead: `${anterior}...${tag}`,
+              });
+              body = comparacion.data.commits
+                .map((c) => c.commit.message.split('\n')[0])
+                .filter((linea) => !/^v\d+\.\d+\.\d+:/.test(linea))
+                .map((linea) => `- ${linea}`)
+                .join('\n');
+            }
+
             const { data } = await github.rest.repos.createRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
               tag_name: tag,
               name: `POS Minimarket ${tag}`,
+              body,
               draft: true,
               prerelease: false,
-              // Arma la lista de cambios sola a partir de los commits desde
-              // el tag anterior — es lo que la app muestra en la ventanita
-              // de "qué hay de nuevo" tras actualizar (ver update.body en
-              // App.tsx), así que necesita contenido real sin que haya que
-              // escribirlo a mano en cada release.
-              generate_release_notes: true,
             });
             return data.id;
 

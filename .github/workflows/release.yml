@@ -37,12 +37,21 @@ jobs:
             // quedaría siempre vacío. Se excluye el propio commit
             // "vX.Y.Z: ..." del bump de versión, ya que ese texto ya está
             // implícito en el título de la ventanita.
-            const releases = await github.rest.repos.listReleases({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              per_page: 1,
-            });
-            const anterior = releases.data[0]?.tag_name;
+            // getLatestRelease (no listReleases) porque ignora borradores —
+            // este repo tiene un par de releases borrador abandonados de
+            // corridas viejas, y listReleases no garantiza devolverlos
+            // ordenados por fecha, así que con per_page:1 podía traer uno
+            // de esos en vez del último release de verdad.
+            let anterior;
+            try {
+              const ultimo = await github.rest.repos.getLatestRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+              });
+              anterior = ultimo.data.tag_name;
+            } catch (e) {
+              if (e.status !== 404) throw e; // 404 = todavía no hay ningún release
+            }
             let body = '';
             if (anterior) {
               const comparacion = await github.rest.repos.compareCommitsWithBasehead({

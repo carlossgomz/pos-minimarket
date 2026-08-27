@@ -19,6 +19,7 @@ import Estadisticas from "./screens/Estadisticas";
 import Facturas from "./screens/Facturas";
 import Usuarios from "./screens/Usuarios";
 import Login from "./screens/Login";
+import Novedades from "./screens/Novedades";
 import PendientesCodigoBarras from "./screens/PendientesCodigoBarras";
 import logo from "./assets/logo.png";
 
@@ -95,6 +96,25 @@ export default function App() {
   const [actualizacion, setActualizacion] = useState<Update | null>(null);
   const [instalando, setInstalando] = useState(false);
   const [errorActualizacion, setErrorActualizacion] = useState<string | null>(null);
+
+  // "Qué hay de nuevo": justo antes de reiniciar para instalar (ver
+  // instalarActualizacion) se guarda acá la versión + notas del release —
+  // como el reinicio arranca un proceso nuevo, es la única forma de que
+  // el próximo arranque (ya en la versión nueva) sepa que tiene que
+  // mostrar la ventanita, y con qué contenido.
+  const NOVEDADES_KEY = "pos-novedades-pendientes";
+  const [novedades, setNovedades] = useState<{ version: string; body: string } | null>(null);
+  useEffect(() => {
+    const guardado = localStorage.getItem(NOVEDADES_KEY);
+    if (!guardado) return;
+    localStorage.removeItem(NOVEDADES_KEY);
+    try {
+      setNovedades(JSON.parse(guardado));
+    } catch {
+      // dato guardado corrupto (no debería pasar) — simplemente no se
+      // muestra la ventanita, no vale la pena romper el arranque por esto
+    }
+  }, []);
 
   async function cargarConfig() {
     try {
@@ -288,6 +308,10 @@ export default function App() {
     setErrorActualizacion(null);
     try {
       await actualizacion.downloadAndInstall();
+      localStorage.setItem(
+        NOVEDADES_KEY,
+        JSON.stringify({ version: actualizacion.version, body: actualizacion.body ?? "" })
+      );
       await relaunch();
     } catch (e) {
       setErrorActualizacion(`No se pudo instalar la actualización: ${String(e)}`);
@@ -335,7 +359,12 @@ export default function App() {
   }
 
   if (!usuarioActual) {
-    return <Login config={config} onLogin={setUsuarioActual} />;
+    return (
+      <>
+        <Login config={config} onLogin={setUsuarioActual} />
+        {novedades && <Novedades novedades={novedades} onCerrar={() => setNovedades(null)} />}
+      </>
+    );
   }
 
   const vendedorActual = vendedores.find((v) => v.id === config.vendedor_actual_id) ?? null;

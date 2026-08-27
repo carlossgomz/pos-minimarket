@@ -204,6 +204,7 @@ export default function Estadisticas({ config }: { config: ConfigRow }) {
                   <th>Producto</th>
                   <th>Cantidad</th>
                   <th>Total Bs</th>
+                  <th>Total USD</th>
                 </tr>
               </thead>
               <tbody>
@@ -224,6 +225,7 @@ export default function Estadisticas({ config }: { config: ConfigRow }) {
                     </td>
                     <td>{p.cantidad}</td>
                     <td>{p.monto_bs.toFixed(2)}</td>
+                    <td>{(p.monto_bs / config.tasa_cambio_dia).toFixed(2)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -270,6 +272,7 @@ export default function Estadisticas({ config }: { config: ConfigRow }) {
                   <th>Cliente</th>
                   <th>N° compras</th>
                   <th>Total gastado Bs</th>
+                  <th>Total gastado USD</th>
                 </tr>
               </thead>
               <tbody>
@@ -290,6 +293,7 @@ export default function Estadisticas({ config }: { config: ConfigRow }) {
                     </td>
                     <td>{c.num_compras}</td>
                     <td>{c.total_gastado_bs.toFixed(2)}</td>
+                    <td>{(c.total_gastado_bs / config.tasa_cambio_dia).toFixed(2)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -308,6 +312,7 @@ export default function Estadisticas({ config }: { config: ConfigRow }) {
                 <tr>
                   <th>Método</th>
                   <th>Total Bs</th>
+                  <th>Total USD</th>
                   <th>%</th>
                 </tr>
               </thead>
@@ -316,6 +321,7 @@ export default function Estadisticas({ config }: { config: ConfigRow }) {
                   <tr key={m.metodo}>
                     <td>{m.metodo}</td>
                     <td>{m.monto_bs.toFixed(2)}</td>
+                    <td>{(m.monto_bs / config.tasa_cambio_dia).toFixed(2)}</td>
                     <td>{totalPagos > 0 ? ((m.monto_bs / totalPagos) * 100).toFixed(1) : "0.0"}%</td>
                   </tr>
                 ))}
@@ -336,6 +342,7 @@ export default function Estadisticas({ config }: { config: ConfigRow }) {
                 <tr>
                   <th>Categoría</th>
                   <th>Total Bs</th>
+                  <th>Total USD</th>
                 </tr>
               </thead>
               <tbody>
@@ -343,6 +350,7 @@ export default function Estadisticas({ config }: { config: ConfigRow }) {
                   <tr key={c.categoria}>
                     <td>{c.categoria}</td>
                     <td>{c.monto_bs.toFixed(2)}</td>
+                    <td>{(c.monto_bs / config.tasa_cambio_dia).toFixed(2)}</td>
                   </tr>
                 ))}
               </tbody>

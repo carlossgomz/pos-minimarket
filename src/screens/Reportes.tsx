@@ -340,10 +340,12 @@ export default function Reportes({ config }: { config: ConfigRow }) {
           <h2>Tienda vs. Delivery</h2>
           <div className="form-row">
             <div>
-              <strong>Tienda:</strong> Bs {totalTienda.toFixed(2)} ({numTienda} venta{numTienda === 1 ? "" : "s"})
+              <strong>Tienda:</strong> Bs {totalTienda.toFixed(2)} (USD {(totalTienda / config.tasa_cambio_dia).toFixed(2)}) —{" "}
+              {numTienda} venta{numTienda === 1 ? "" : "s"}
             </div>
             <div>
-              <strong>Delivery:</strong> Bs {totalDelivery.toFixed(2)} ({numDelivery} venta{numDelivery === 1 ? "" : "s"})
+              <strong>Delivery:</strong> Bs {totalDelivery.toFixed(2)} (USD{" "}
+              {(totalDelivery / config.tasa_cambio_dia).toFixed(2)}) — {numDelivery} venta{numDelivery === 1 ? "" : "s"}
             </div>
           </div>
         </div>
@@ -358,6 +360,7 @@ export default function Reportes({ config }: { config: ConfigRow }) {
                 <th>Método</th>
                 <th>Cant. de productos</th>
                 <th>Monto Bs</th>
+                <th>Monto USD</th>
               </tr>
             </thead>
             <tbody>
@@ -366,12 +369,14 @@ export default function Reportes({ config }: { config: ConfigRow }) {
                   <td>{m.metodo.split("_").join(" ")}</td>
                   <td>{m.cantidad_productos}</td>
                   <td>{m.monto_bs.toFixed(2)}</td>
+                  <td>{(m.monto_bs / config.tasa_cambio_dia).toFixed(2)}</td>
                 </tr>
               ))}
               <tr style={{ fontWeight: 700 }}>
                 <td>Total global</td>
                 <td>{totalProductosGlobal}</td>
                 <td>{resumen.totalVentas.toFixed(2)}</td>
+                <td>{(resumen.totalVentas / config.tasa_cambio_dia).toFixed(2)}</td>
               </tr>
             </tbody>
           </table>

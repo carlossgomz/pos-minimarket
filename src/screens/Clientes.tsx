@@ -85,6 +85,16 @@ export default function Clientes() {
     if (seleccionado?.id === c.id) setSeleccionado({ ...c, credito_autorizado: nuevo });
   }
 
+  // Controla si "Descuento de nómina" aparece como método al registrarle
+  // un abono (ver Cuentas.tsx) — nada más depende de esta marca.
+  async function toggleEmpleado(c: Cliente) {
+    const db = await getDb();
+    const nuevo = c.es_empleado ? 0 : 1;
+    await db.execute("UPDATE clientes SET es_empleado = $1 WHERE id = $2", [nuevo, c.id]);
+    await cargarClientes();
+    if (seleccionado?.id === c.id) setSeleccionado({ ...c, es_empleado: nuevo });
+  }
+
   async function actualizarDireccion(c: Cliente, nuevaDireccion: string) {
     const valor = nuevaDireccion.trim();
     if (valor === (c.direccion ?? "")) return;
@@ -171,7 +181,10 @@ export default function Clientes() {
                 <td>{c.nombre}</td>
                 <td>{c.cedula}</td>
                 <td>{c.credito_autorizado ? "Autorizado" : "No"}</td>
-                <td>{c.cliente_app_id && <span className="badge badge-ok">📱 App</span>}</td>
+                <td>
+                  {c.cliente_app_id && <span className="badge badge-ok">📱 App</span>}{" "}
+                  {!!c.es_empleado && <span className="badge badge-ok">👤 Empleado</span>}
+                </td>
                 <td>
                   <button className="link-btn" onClick={() => abrirFicha(c)}>
                     ver ficha
@@ -245,6 +258,14 @@ export default function Clientes() {
                   onChange={() => toggleCredito(seleccionado)}
                 />{" "}
                 Crédito autorizado
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={!!seleccionado.es_empleado}
+                  onChange={() => toggleEmpleado(seleccionado)}
+                />{" "}
+                Es empleado
               </label>
             </div>
 

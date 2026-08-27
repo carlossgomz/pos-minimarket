@@ -168,6 +168,7 @@ export type ClienteDeudor = {
   cliente_cedula: string;
   total_pendiente_usd: number;
   num_ventas: number;
+  es_empleado: number; // 0/1 — controla si "Descuento de nómina" aparece al abonar
 };
 
 export type VentaCredito = {
@@ -208,6 +209,7 @@ export type Cliente = {
   // referencia (ver migración 0014).
   cliente_app_id: string | null;
   credito_autorizado: number; // 0/1
+  es_empleado: number; // 0/1 — controla si "Descuento de nómina" aparece al abonar
 };
 
 export type VentaResumen = {

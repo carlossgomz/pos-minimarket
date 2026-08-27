@@ -34,6 +34,12 @@ jobs:
               name: `POS Minimarket ${tag}`,
               draft: true,
               prerelease: false,
+              // Arma la lista de cambios sola a partir de los commits desde
+              // el tag anterior — es lo que la app muestra en la ventanita
+              // de "qué hay de nuevo" tras actualizar (ver update.body en
+              // App.tsx), así que necesita contenido real sin que haya que
+              // escribirlo a mano en cada release.
+              generate_release_notes: true,
             });
             return data.id;
 

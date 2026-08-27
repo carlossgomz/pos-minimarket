@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getDb } from "../db";
 import {
@@ -100,12 +100,14 @@ function CuentasPorCobrar({ config, esAdmin }: { config: ConfigRow; esAdmin: boo
   async function cargarClientes() {
     const db = await getDb();
     const rows = await db.select<ClienteDeudor[]>(
-      `SELECT cliente_nombre, cliente_cedula,
-              SUM(monto_pendiente_usd) as total_pendiente_usd,
-              COUNT(*) as num_ventas
-       FROM ventas
-       WHERE estado = 'CREDITO_PENDIENTE'
-       GROUP BY cliente_cedula
+      `SELECT v.cliente_nombre, v.cliente_cedula,
+              SUM(v.monto_pendiente_usd) as total_pendiente_usd,
+              COUNT(*) as num_ventas,
+              COALESCE(MAX(c.es_empleado), 0) as es_empleado
+       FROM ventas v
+       LEFT JOIN clientes c ON c.cedula = v.cliente_cedula
+       WHERE v.estado = 'CREDITO_PENDIENTE'
+       GROUP BY v.cliente_cedula
        ORDER BY total_pendiente_usd DESC`
     );
     setClientes(rows);
@@ -147,12 +149,21 @@ function CuentasPorCobrar({ config, esAdmin }: { config: ConfigRow; esAdmin: boo
     setVentas(rows);
   }
 
+  const abonoRef = useRef<HTMLDivElement>(null);
+
   function empezarAbono(c: ClienteDeudor) {
     setClienteAbono(c);
     setMontoBs("");
     setTasaPago(String(config.tasa_cambio_dia));
     setMensaje(null);
   }
+
+  // La tarjeta de abono recién aparece en el DOM cuando clienteAbono deja
+  // de ser null — hay que esperar a ese render (no alcanza con hacerlo
+  // dentro del click) para que scrollIntoView encuentre el elemento.
+  useEffect(() => {
+    if (clienteAbono) abonoRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [clienteAbono]);
 
   async function confirmarAbono() {
     if (!clienteAbono) return;
@@ -355,12 +366,13 @@ function CuentasPorCobrar({ config, esAdmin }: { config: ConfigRow; esAdmin: boo
       </table>
 
       {clienteAbono && (
-        <div className="card" style={{ marginTop: 16 }}>
+        <div className="card" style={{ marginTop: 16 }} ref={abonoRef}>
           <h2>Abono de {clienteAbono.cliente_nombre}</h2>
           <p className="hint">
             Deuda total pendiente ({clienteAbono.num_ventas} venta{clienteAbono.num_ventas === 1 ? "" : "s"}
-            ): USD {clienteAbono.total_pendiente_usd.toFixed(2)}. Ingresa cuánto paga el cliente hoy
-            y a qué tasa — el pago se aplica primero a la venta más antigua.
+            ): USD {clienteAbono.total_pendiente_usd.toFixed(2)} (Bs{" "}
+            {(clienteAbono.total_pendiente_usd * config.tasa_cambio_dia).toFixed(2)} a la tasa de hoy). Ingresa
+            cuánto paga el cliente hoy y a qué tasa — el pago se aplica primero a la venta más antigua.
           </p>
           <div className="form-row">
             <input placeholder="Monto Bs" type="number" step="0.01" value={montoBs} onChange={(e) => setMontoBs(e.target.value)} />
@@ -372,6 +384,9 @@ function CuentasPorCobrar({ config, esAdmin }: { config: ConfigRow; esAdmin: boo
               <option value="EFECTIVO">Efectivo</option>
               <option value="DIVISAS">Divisas</option>
               <option value="TRANSFERENCIA">Transferencia</option>
+              {esAdmin && !!clienteAbono?.es_empleado && (
+                <option value="DESCUENTO_NOMINA">Descuento de nómina</option>
+              )}
             </select>
             <button onClick={confirmarAbono}>Confirmar abono</button>
             <button className="link-btn" onClick={() => setClienteAbono(null)}>
@@ -1356,6 +1371,7 @@ function CreditosPagados({ esAdmin }: { esAdmin: boolean }) {
                             {m.split("_").join(" ")}
                           </option>
                         ))}
+                        <option value="DESCUENTO_NOMINA">Descuento de nómina</option>
                       </select>
                     ) : (
                       c.metodo?.split("_").join(" ") ?? "—"

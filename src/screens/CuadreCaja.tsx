@@ -44,8 +44,14 @@ export default function CuadreCaja() {
        GROUP BY p.metodo`,
       [fecha]
     );
+    // DESCUENTO_NOMINA: el crédito se saldó descontándolo del sueldo del
+    // empleado, no con ningún método de pago de la tienda — no entró (ni
+    // salió) plata de la caja física, así que no debe sumar acá. Mismo
+    // criterio que ya se usa arriba con 'CREDITO' en pagos.
     const porCobroCredito = await db.select<{ metodo: string | null; monto: number }[]>(
-      `SELECT metodo, SUM(monto_bs) as monto FROM cobros_cliente WHERE date(created_at) = $1 GROUP BY metodo`,
+      `SELECT metodo, SUM(monto_bs) as monto FROM cobros_cliente
+       WHERE date(created_at) = $1 AND metodo != 'DESCUENTO_NOMINA'
+       GROUP BY metodo`,
       [fecha]
     );
     // Avances de efectivo: lo cobrado por el método usado es un ingreso

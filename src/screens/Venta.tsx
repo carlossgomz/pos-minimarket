@@ -744,6 +744,7 @@ export default function Venta({
       direccion,
       cliente_app_id: null,
       credito_autorizado: 0,
+      es_empleado: 0,
     });
     setClienteNuevoNombre("");
     setClienteNuevoCedula("");

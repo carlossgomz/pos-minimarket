@@ -293,13 +293,22 @@ export default function App() {
 
   useEffect(() => {
     if (!configSyncLista) return;
-    check()
-      .then((update) => setActualizacion(update))
-      .catch(() => {
-        // sin internet o el endpoint no respondió — no es un error para
-        // mostrarle al usuario, simplemente no hay forma de saber si hay
-        // una versión nueva en este momento
-      });
+    // Antes se revisaba una sola vez al arrancar — si publicabas una
+    // versión nueva con la caja ya abierta, no se enteraba hasta cerrar y
+    // volver a abrir. Ahora revisa de nuevo cada rato mientras sigue
+    // abierta, así el aviso de actualización aparece solo.
+    function verificarActualizacion() {
+      check()
+        .then((update) => setActualizacion(update))
+        .catch(() => {
+          // sin internet o el endpoint no respondió — no es un error para
+          // mostrarle al usuario, simplemente no hay forma de saber si hay
+          // una versión nueva en este momento
+        });
+    }
+    verificarActualizacion();
+    const id = setInterval(verificarActualizacion, 30 * 60 * 1000);
+    return () => clearInterval(id);
   }, [configSyncLista]);
 
   async function instalarActualizacion() {

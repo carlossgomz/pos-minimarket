@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "POS Minimarket",
+  "productName": "Kaxa",
   "version": "0.5.9",
   "identifier": "com.minimarket.pos",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "POS Minimarket",
+        "title": "Kaxa",
         "width": 1280,
         "height": 800,
         "minWidth": 1024,

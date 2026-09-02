@@ -13,6 +13,7 @@ fn main() {
                 "guardar_config_sync",
                 "estado_conexion",
                 "escanear_factura",
+                "sugerir_reposicion",
                 "confirmar_venta",
                 "editar_venta_items",
                 "eliminar_venta",

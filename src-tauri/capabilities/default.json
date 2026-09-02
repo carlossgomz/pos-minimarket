@@ -14,6 +14,7 @@
     "allow-guardar-config-sync",
     "allow-estado-conexion",
     "allow-escanear-factura",
+    "allow-sugerir-reposicion",
     "allow-confirmar-venta",
     "allow-editar-venta-items",
     "allow-eliminar-venta",

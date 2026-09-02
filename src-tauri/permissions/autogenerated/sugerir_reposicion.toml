@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-sugerir-reposicion"
+description = "Enables the sugerir_reposicion command without any pre-configured scope."
+commands.allow = ["sugerir_reposicion"]
+
+[[permission]]
+identifier = "deny-sugerir-reposicion"
+description = "Denies the sugerir_reposicion command without any pre-configured scope."
+commands.deny = ["sugerir_reposicion"]

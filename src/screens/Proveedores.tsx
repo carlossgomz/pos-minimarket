@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getDb } from "../db";
 import { FacturaResumen, Proveedor } from "../types";
 import { normalizarTexto, sqlSinAcentos } from "../busqueda";
@@ -16,6 +16,18 @@ export default function Proveedores() {
   const [telefono, setTelefono] = useState("");
   const [mensaje, setMensaje] = useState<string | null>(null);
   const [editando, setEditando] = useState<Proveedor | null>(null);
+
+  // Scroll automático a la ficha/formulario correspondiente al elegir
+  // "ver ficha" o "editar" en la lista — mismo patrón que el abono en
+  // Cuentas.tsx.
+  const formularioRef = useRef<HTMLDivElement>(null);
+  const fichaRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (editando) formularioRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [editando]);
+  useEffect(() => {
+    if (seleccionado) fichaRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [seleccionado]);
 
   async function cargarProveedores() {
     const db = await getDb();
@@ -47,48 +59,13 @@ export default function Proveedores() {
     setMensaje(null);
   }
 
-  // Un proveedor solo se puede borrar del todo si nunca tuvo facturas de
-  // compra ni códigos de producto asociados — si tiene historia, borrarlo
-  // dejaría huecos en las facturas viejas, así que en ese caso se ofrece
-  // desactivarlo en su lugar: deja de aparecer para elegir en Compras pero
-  // conserva su ficha e historial (igual que con productos en Inventario).
   async function eliminarProveedor(p: Proveedor) {
     setMensaje(null);
+    if (!window.confirm(`¿Eliminar a "${p.nombre}" del todo? No se puede deshacer.`)) return;
     const db = await getDb();
-    const [conteo] = await db.select<{ total: number }[]>(
-      `SELECT
-         (SELECT COUNT(*) FROM facturas_compra WHERE proveedor_id = $1) +
-         (SELECT COUNT(*) FROM codigos_proveedor_producto WHERE proveedor_id = $1) as total`,
-      [p.id]
-    );
-
-    if (conteo.total > 0) {
-      if (
-        !window.confirm(
-          `"${p.nombre}" ya tiene facturas o códigos de producto asociados, así que no se puede borrar del todo sin perder esos registros. ¿Lo desactivo en su lugar? Deja de aparecer para elegir en Compras, pero conserva su ficha e historial.`
-        )
-      ) {
-        return;
-      }
-      await db.execute("UPDATE proveedores SET activo = 0 WHERE id = $1", [p.id]);
-      if (seleccionado?.id === p.id) setSeleccionado({ ...p, activo: 0 });
-      await cargarProveedores();
-      return;
-    }
-
-    if (!window.confirm(`¿Eliminar "${p.nombre}" del catálogo? No tiene historial, así que se borra por completo.`)) {
-      return;
-    }
     await db.execute("DELETE FROM proveedores WHERE id = $1", [p.id]);
     if (seleccionado?.id === p.id) setSeleccionado(null);
     if (editando?.id === p.id) cancelarEdicion();
-    await cargarProveedores();
-  }
-
-  async function reactivarProveedor(p: Proveedor) {
-    const db = await getDb();
-    await db.execute("UPDATE proveedores SET activo = 1 WHERE id = $1", [p.id]);
-    if (seleccionado?.id === p.id) setSeleccionado({ ...p, activo: 1 });
     await cargarProveedores();
   }
 
@@ -151,7 +128,7 @@ export default function Proveedores() {
 
   return (
     <div className="venta-layout">
-      <div className="card">
+      <div className="card" ref={formularioRef}>
         <h2>{editando ? `Editar proveedor` : "Nuevo proveedor"}</h2>
         <form className="form-row" onSubmit={guardarProveedor}>
           <input placeholder="Nombre" value={nombre} onChange={(e) => setNombre(e.target.value)} required />
@@ -185,10 +162,7 @@ export default function Proveedores() {
           <tbody>
             {proveedores.map((p) => (
               <tr key={p.id}>
-                <td>
-                  {p.nombre}
-                  {!p.activo && <span className="hint"> (inactivo)</span>}
-                </td>
+                <td>{p.nombre}</td>
                 <td>{p.rif}</td>
                 <td>
                   <button className="link-btn" onClick={() => abrirFicha(p)}>
@@ -197,15 +171,9 @@ export default function Proveedores() {
                   <button className="link-btn" onClick={() => editarProveedor(p)}>
                     editar
                   </button>{" "}
-                  {p.activo ? (
-                    <button className="link-btn link-btn-danger" onClick={() => eliminarProveedor(p)}>
-                      eliminar
-                    </button>
-                  ) : (
-                    <button className="link-btn" onClick={() => reactivarProveedor(p)}>
-                      reactivar
-                    </button>
-                  )}
+                  <button className="link-btn link-btn-danger" onClick={() => eliminarProveedor(p)}>
+                    eliminar
+                  </button>
                 </td>
               </tr>
             ))}
@@ -220,7 +188,7 @@ export default function Proveedores() {
         </table>
       </div>
 
-      <div className="card">
+      <div className="card" ref={fichaRef}>
         {!seleccionado ? (
           <p className="hint">Selecciona un proveedor para ver su ficha.</p>
         ) : (

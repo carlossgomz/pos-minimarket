@@ -231,8 +231,27 @@ pub struct SugerenciaReposicion {
 
 #[tauri::command]
 pub async fn sugerir_reposicion(app: tauri::AppHandle) -> Result<SugerenciaReposicion, String> {
+    // Aislado en su propia tarea: si algo interno panickea con datos
+    // reales inesperados (pasó en producción una vez), esto lo atrapa
+    // como un error normal en vez de tumbar toda la app.
+    match tokio::spawn(sugerir_reposicion_interna(app)).await {
+        Ok(resultado) => resultado,
+        Err(e) => Err(format!("La sugerencia de reposición falló inesperadamente: {e}")),
+    }
+}
+
+async fn sugerir_reposicion_interna(app: tauri::AppHandle) -> Result<SugerenciaReposicion, String> {
     let estado = app.state::<EstadoBaseDatos>();
     let conn = db::obtener_conexion(&estado).await?;
+
+    // La fecha de corte se calcula acá (no con date('now', ?) del lado de
+    // SQLite) para seguir el mismo patrón que ya usa el resto de la app:
+    // los rangos de fecha siempre se resuelven a un literal antes de
+    // mandarlo a la base (ver Estadisticas.tsx/Reportes.tsx), nunca con
+    // aritmética de fechas dentro del SQL.
+    let desde = (chrono::Utc::now() - chrono::Duration::days(DIAS_HISTORIAL))
+        .format("%Y-%m-%d")
+        .to_string();
 
     // Un producto por peso vende en kilos, no en "unidades" — hay que
     // comparar volumen real contra stock_actual (también en kilos) para
@@ -245,11 +264,11 @@ pub async fn sugerir_reposicion(app: tauri::AppHandle) -> Result<SugerenciaRepos
                       SELECT SUM(vi.cantidad) FROM venta_items vi
                       JOIN ventas v ON v.id = vi.venta_id
                       WHERE vi.producto_id = p.id
-                        AND date(v.fecha_hora) >= date('now', ?1)
+                        AND date(v.fecha_hora) >= ?1
                     ), 0) as vendido_periodo
              FROM productos p
              WHERE p.activo = 1 AND p.id != 'f195fbac-103d-48fa-a27a-28371fba7745'",
-            libsql::params![format!("-{DIAS_HISTORIAL} days")],
+            libsql::params![desde],
         )
         .await
         .map_err(|e| e.to_string())?;

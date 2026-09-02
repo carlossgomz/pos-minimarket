@@ -231,13 +231,33 @@ pub struct SugerenciaReposicion {
 
 #[tauri::command]
 pub async fn sugerir_reposicion(app: tauri::AppHandle) -> Result<SugerenciaReposicion, String> {
-    // Aislado en su propia tarea: si algo interno panickea con datos
-    // reales inesperados (pasó en producción una vez), esto lo atrapa
-    // como un error normal en vez de tumbar toda la app.
-    match tokio::spawn(sugerir_reposicion_interna(app)).await {
-        Ok(resultado) => resultado,
-        Err(e) => Err(format!("La sugerencia de reposición falló inesperadamente: {e}")),
+    // La consulta contra el catálogo completo (cientos de productos)
+    // necesita más stack del que dan por defecto los hilos de
+    // Tauri/Tokio — confirmado en producción: era un stack overflow real
+    // (no un panic común), reproducido fuera de la app contra la misma
+    // base. Por eso corre en un hilo aparte con stack más grande, y el
+    // resultado vuelve por un canal para no bloquear el runtime async.
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let resultado_spawn = std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
+            let runtime = match tokio::runtime::Runtime::new() {
+                Ok(rt) => rt,
+                Err(e) => {
+                    let _ = tx.send(Err(format!("No se pudo iniciar el cálculo: {e}")));
+                    return;
+                }
+            };
+            let resultado = runtime.block_on(sugerir_reposicion_interna(app));
+            let _ = tx.send(resultado);
+        });
+
+    if let Err(e) = resultado_spawn {
+        return Err(format!("No se pudo iniciar el cálculo: {e}"));
     }
+
+    rx.await
+        .map_err(|_| "El cálculo de reposición no terminó correctamente.".to_string())?
 }
 
 async fn sugerir_reposicion_interna(app: tauri::AppHandle) -> Result<SugerenciaReposicion, String> {
@@ -257,6 +277,12 @@ async fn sugerir_reposicion_interna(app: tauri::AppHandle) -> Result<SugerenciaR
     // comparar volumen real contra stock_actual (también en kilos) para
     // que la matemática de reposición tenga sentido; por eso acá NO se
     // cuenta "1 por línea" como sí hace Estadisticas.tsx para su ranking.
+    // El 0.0 acá (no 0) importa: si fuera entero, esta columna cambia de
+    // tipo fila a fila (entero cuando no hubo ventas, real cuando sí) —
+    // eso rompe la decodificación remota de libsql 0.9.30, confirmado
+    // reproduciendo el crash de producción contra el catálogo completo
+    // (652 productos, 208 con el tipo mezclado, panic "invalid value
+    // type" en todos esos hasta fijar el tipo acá).
     let mut filas = conn
         .query(
             "SELECT p.id, p.nombre, p.stock_actual, p.stock_minimo,
@@ -265,7 +291,7 @@ async fn sugerir_reposicion_interna(app: tauri::AppHandle) -> Result<SugerenciaR
                       JOIN ventas v ON v.id = vi.venta_id
                       WHERE vi.producto_id = p.id
                         AND date(v.fecha_hora) >= ?1
-                    ), 0) as vendido_periodo
+                    ), 0.0) as vendido_periodo
              FROM productos p
              WHERE p.activo = 1 AND p.id != 'f195fbac-103d-48fa-a27a-28371fba7745'",
             libsql::params![desde],

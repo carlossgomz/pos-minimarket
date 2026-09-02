@@ -21,6 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       release_id: ${{ steps.crear.outputs.result }}
+      body: ${{ steps.crear.outputs.body }}
     steps:
       - id: crear
         uses: actions/github-script@v7
@@ -75,6 +76,14 @@ jobs:
               draft: true,
               prerelease: false,
             });
+            // tauri-action (job "compilar") NO relee el body que se le
+            // puso al release recién creado — arma el "notes" de
+            // latest.json (lo que en verdad lee el updater de la app,
+            // ver App.tsx) a partir de su propio input releaseBody, que
+            // si no se le pasa queda vacío. Por eso el texto de cambios
+            // sale acá como output también, no solo en el body del
+            // release.
+            core.setOutput('body', body);
             return data.id;
 
   compilar:
@@ -109,6 +118,7 @@ jobs:
         with:
           args: --target ${{ matrix.target }}
           releaseId: ${{ needs.crear-release.outputs.release_id }}
+          releaseBody: ${{ needs.crear-release.outputs.body }}
 
   publicar-release:
     needs: [crear-release, compilar]

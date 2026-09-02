@@ -316,13 +316,22 @@ export default function App() {
     setInstalando(true);
     setErrorActualizacion(null);
     try {
-      await actualizacion.downloadAndInstall();
+      // Se guarda ANTES de instalar, no después — en Windows
+      // downloadAndInstall() puede cerrar el proceso actual como parte de
+      // instalar (el .exe necesita quedar libre para que el instalador lo
+      // reemplace), así que el código de después de esa llamada no
+      // siempre llega a correr.
       localStorage.setItem(
         NOVEDADES_KEY,
         JSON.stringify({ version: actualizacion.version, body: actualizacion.body ?? "" })
       );
+      await actualizacion.downloadAndInstall();
       await relaunch();
     } catch (e) {
+      // Si falló acá, no se instaló nada — hay que borrar el aviso que se
+      // guardó antes, si no la próxima vez que abra (sin haber
+      // actualizado de verdad) igual le aparecería la ventanita.
+      localStorage.removeItem(NOVEDADES_KEY);
       setErrorActualizacion(`No se pudo instalar la actualización: ${String(e)}`);
       setInstalando(false);
     }

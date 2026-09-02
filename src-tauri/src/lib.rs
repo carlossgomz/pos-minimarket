@@ -65,6 +65,7 @@ pub fn run() {
             db::guardar_config_sync,
             offline::estado_conexion,
             ia::escanear_factura,
+            ia::sugerir_reposicion,
             comandos::confirmar_venta,
             comandos::editar_venta_items,
             comandos::eliminar_venta,

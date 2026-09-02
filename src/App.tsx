@@ -372,6 +372,7 @@ export default function App() {
       <>
         <Login config={config} onLogin={setUsuarioActual} />
         {novedades && <Novedades novedades={novedades} onCerrar={() => setNovedades(null)} />}
+        <div className="marca-dev">hecho por Carloscode_</div>
       </>
     );
   }
@@ -568,6 +569,7 @@ export default function App() {
           onCambio={cargarPendientesCodigo}
         />
       )}
+      <div className="marca-dev">hecho por Carloscode_</div>
     </div>
   );
 }

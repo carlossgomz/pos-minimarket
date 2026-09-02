@@ -437,6 +437,20 @@ th {
   margin-bottom: 16px;
 }
 
+/* Créditos del desarrollador — discreto, no debe competir con la interfaz
+   ni bloquear clics sobre lo que quede debajo. */
+.marca-dev {
+  position: fixed;
+  right: 10px;
+  bottom: 6px;
+  font-size: 10px;
+  color: var(--text-muted);
+  opacity: 0.55;
+  pointer-events: none;
+  user-select: none;
+  z-index: 1;
+}
+
 .tabs button {
   padding: 8px 16px;
   border: 1px solid var(--border);
@@ -543,21 +557,20 @@ th {
 /* --- Cobro rápido: un click cobra el total exacto con ese método --- */
 
 .cobro-rapido {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
 }
 
 .cobro-rapido-btn {
-  flex: 1;
-  min-width: 150px;
-  padding: 14px 10px;
+  padding: 12px 8px;
   background: var(--accent);
   color: var(--accent-contrast);
   border: none;
   border-radius: 8px;
   font-weight: 600;
-  font-size: 14px;
+  font-size: 13px;
+  line-height: 1.3;
   cursor: pointer;
 }
 

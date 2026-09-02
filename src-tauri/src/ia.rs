@@ -109,12 +109,10 @@ fn schema_respuesta() -> serde_json::Value {
     })
 }
 
-#[tauri::command]
-pub async fn escanear_factura(
-    app: tauri::AppHandle,
-    imagen_base64: String,
-    mime_type: String,
-) -> Result<FacturaExtraida, String> {
+// Lee la clave de Gemini configurada en `config` — la usan tanto el
+// escaneo de facturas como la sugerencia de reposición, así que queda acá
+// en vez de repetirse.
+async fn obtener_api_key(app: &tauri::AppHandle) -> Result<String, String> {
     let estado = app.state::<EstadoBaseDatos>();
     let conn = db::obtener_conexion(&estado).await?;
 
@@ -129,22 +127,25 @@ pub async fn escanear_factura(
         Some(f) => f.get(0).map_err(|e| e.to_string())?,
         None => None,
     };
-    let api_key = api_key
+    api_key
         .filter(|k| !k.trim().is_empty())
-        .ok_or_else(|| "Configura tu API key de Gemini en Compras primero.".to_string())?;
+        .ok_or_else(|| "Configura tu API key de Gemini en Compras primero.".to_string())
+}
 
-    let body = serde_json::json!({
-        "contents": [{
-            "parts": [
-                { "text": PROMPT },
-                { "inline_data": { "mime_type": mime_type, "data": imagen_base64 } }
-            ]
-        }],
-        "generationConfig": {
-            "responseMimeType": "application/json",
-            "responseSchema": schema_respuesta()
-        }
-    });
+// Llamado compartido a Gemini: manda `contents` (texto y/o imagen) y,
+// opcionalmente, un `generation_config` (para pedir JSON con schema fijo,
+// como hace escanear_factura) — sin él, Gemini responde en texto plano.
+// Devuelve el texto crudo que contestó el modelo, sin interpretarlo, para
+// que cada llamador lo parsee como le corresponda.
+async fn llamar_gemini(
+    api_key: &str,
+    contents: serde_json::Value,
+    generation_config: Option<serde_json::Value>,
+) -> Result<String, String> {
+    let mut body = serde_json::json!({ "contents": contents });
+    if let Some(config) = generation_config {
+        body["generationConfig"] = config;
+    }
 
     let url = format!(
         "https://generativelanguage.googleapis.com/v1beta/models/{MODELO_GEMINI}:generateContent"
@@ -169,7 +170,7 @@ pub async fn escanear_factura(
     let cruda: serde_json::Value =
         serde_json::from_str(&texto).map_err(|e| format!("Respuesta inesperada de Gemini: {e}"))?;
 
-    let contenido = cruda
+    cruda
         .get("candidates")
         .and_then(|c| c.get(0))
         .and_then(|c| c.get("content"))
@@ -177,8 +178,160 @@ pub async fn escanear_factura(
         .and_then(|p| p.get(0))
         .and_then(|p| p.get("text"))
         .and_then(|t| t.as_str())
-        .ok_or_else(|| format!("Gemini no devolvió texto extraíble: {texto}"))?;
+        .map(|t| t.to_string())
+        .ok_or_else(|| format!("Gemini no devolvió texto extraíble: {texto}"))
+}
 
-    serde_json::from_str::<FacturaExtraida>(contenido)
+#[tauri::command]
+pub async fn escanear_factura(
+    app: tauri::AppHandle,
+    imagen_base64: String,
+    mime_type: String,
+) -> Result<FacturaExtraida, String> {
+    let api_key = obtener_api_key(&app).await?;
+
+    let contents = serde_json::json!([{
+        "parts": [
+            { "text": PROMPT },
+            { "inline_data": { "mime_type": mime_type, "data": imagen_base64 } }
+        ]
+    }]);
+    let generation_config = serde_json::json!({
+        "responseMimeType": "application/json",
+        "responseSchema": schema_respuesta()
+    });
+
+    let contenido = llamar_gemini(&api_key, contents, Some(generation_config)).await?;
+
+    serde_json::from_str::<FacturaExtraida>(&contenido)
         .map_err(|e| format!("No se pudo interpretar lo que extrajo la IA: {e}"))
+}
+
+// Ventana de historial para calcular la venta diaria promedio, y a
+// cuántos días de cobertura se repone — mismo criterio de quincena (15
+// días) que ya se usa para pagar a los repartidores.
+const DIAS_HISTORIAL: i64 = 30;
+const DIAS_COBERTURA_OBJETIVO: i64 = 15;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CandidatoReposicion {
+    pub producto_id: String,
+    pub nombre: String,
+    pub stock_actual: f64,
+    pub venta_diaria_promedio: f64,
+    pub dias_restantes: Option<f64>,
+    pub cantidad_sugerida: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SugerenciaReposicion {
+    pub candidatos: Vec<CandidatoReposicion>,
+    pub resumen_ia: Option<String>,
+}
+
+#[tauri::command]
+pub async fn sugerir_reposicion(app: tauri::AppHandle) -> Result<SugerenciaReposicion, String> {
+    let estado = app.state::<EstadoBaseDatos>();
+    let conn = db::obtener_conexion(&estado).await?;
+
+    // Un producto por peso vende en kilos, no en "unidades" — hay que
+    // comparar volumen real contra stock_actual (también en kilos) para
+    // que la matemática de reposición tenga sentido; por eso acá NO se
+    // cuenta "1 por línea" como sí hace Estadisticas.tsx para su ranking.
+    let mut filas = conn
+        .query(
+            "SELECT p.id, p.nombre, p.stock_actual, p.stock_minimo,
+                    COALESCE((
+                      SELECT SUM(vi.cantidad) FROM venta_items vi
+                      JOIN ventas v ON v.id = vi.venta_id
+                      WHERE vi.producto_id = p.id
+                        AND date(v.fecha_hora) >= date('now', ?1)
+                    ), 0) as vendido_periodo
+             FROM productos p
+             WHERE p.activo = 1 AND p.id != 'f195fbac-103d-48fa-a27a-28371fba7745'",
+            libsql::params![format!("-{DIAS_HISTORIAL} days")],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut candidatos: Vec<CandidatoReposicion> = Vec::new();
+    while let Some(fila) = filas.next().await.map_err(|e| e.to_string())? {
+        let producto_id: String = fila.get(0).map_err(|e| e.to_string())?;
+        let nombre: String = fila.get(1).map_err(|e| e.to_string())?;
+        let stock_actual: f64 = fila.get(2).map_err(|e| e.to_string())?;
+        let stock_minimo: f64 = fila.get(3).map_err(|e| e.to_string())?;
+        let vendido_periodo: f64 = fila.get(4).map_err(|e| e.to_string())?;
+
+        let venta_diaria_promedio = vendido_periodo / DIAS_HISTORIAL as f64;
+        let dias_restantes = if venta_diaria_promedio > 0.0 {
+            Some(stock_actual / venta_diaria_promedio)
+        } else {
+            None
+        };
+
+        let necesita_reposicion = stock_actual <= stock_minimo
+            || dias_restantes.is_some_and(|d| d < DIAS_COBERTURA_OBJETIVO as f64);
+        if !necesita_reposicion {
+            continue;
+        }
+
+        let por_venta = venta_diaria_promedio * DIAS_COBERTURA_OBJETIVO as f64 - stock_actual;
+        let por_minimo = stock_minimo - stock_actual;
+        let cantidad_sugerida = por_venta.max(por_minimo).max(0.0).ceil();
+
+        candidatos.push(CandidatoReposicion {
+            producto_id,
+            nombre,
+            stock_actual,
+            venta_diaria_promedio,
+            dias_restantes,
+            cantidad_sugerida,
+        });
+    }
+
+    candidatos.sort_by(|a, b| match (a.dias_restantes, b.dias_restantes) {
+        (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
+
+    if candidatos.is_empty() {
+        return Ok(SugerenciaReposicion {
+            candidatos,
+            resumen_ia: None,
+        });
+    }
+
+    let resumen_ia = match obtener_api_key(&app).await {
+        Ok(api_key) => {
+            let lista = candidatos
+                .iter()
+                .map(|c| {
+                    let dias = c
+                        .dias_restantes
+                        .map(|d| format!("{d:.0} días de stock restante"))
+                        .unwrap_or_else(|| "sin ventas recientes".to_string());
+                    format!("- {} ({dias}, repone {:.0})", c.nombre, c.cantidad_sugerida)
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            let prompt = format!(
+                "Esta es una lista de productos de un minimarket en Venezuela que necesitan \
+                 reposición, ya calculada con ventas de los últimos {DIAS_HISTORIAL} días:\n\n\
+                 {lista}\n\n\
+                 Escribe un resumen corto (3 a 5 líneas, texto plano, en español simple para el \
+                 dueño de la tienda) priorizando qué comprar primero y por qué. No inventes \
+                 números que no estén en la lista."
+            );
+            let contents = serde_json::json!([{ "parts": [{ "text": prompt }] }]);
+            llamar_gemini(&api_key, contents, None).await.ok()
+        }
+        Err(_) => None,
+    };
+
+    Ok(SugerenciaReposicion {
+        candidatos,
+        resumen_ia,
+    })
 }

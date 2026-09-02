@@ -15,6 +15,7 @@ export default function Proveedores() {
   const [direccion, setDireccion] = useState("");
   const [telefono, setTelefono] = useState("");
   const [mensaje, setMensaje] = useState<string | null>(null);
+  const [editando, setEditando] = useState<Proveedor | null>(null);
 
   async function cargarProveedores() {
     const db = await getDb();
@@ -26,6 +27,69 @@ export default function Proveedores() {
         )
       : await db.select<Proveedor[]>("SELECT * FROM proveedores ORDER BY nombre");
     setProveedores(rows);
+  }
+
+  function editarProveedor(p: Proveedor) {
+    setEditando(p);
+    setMensaje(null);
+    setNombre(p.nombre);
+    setRif(p.rif);
+    setDireccion(p.direccion ?? "");
+    setTelefono(p.telefono ?? "");
+  }
+
+  function cancelarEdicion() {
+    setEditando(null);
+    setNombre("");
+    setRif("");
+    setDireccion("");
+    setTelefono("");
+    setMensaje(null);
+  }
+
+  // Un proveedor solo se puede borrar del todo si nunca tuvo facturas de
+  // compra ni códigos de producto asociados — si tiene historia, borrarlo
+  // dejaría huecos en las facturas viejas, así que en ese caso se ofrece
+  // desactivarlo en su lugar: deja de aparecer para elegir en Compras pero
+  // conserva su ficha e historial (igual que con productos en Inventario).
+  async function eliminarProveedor(p: Proveedor) {
+    setMensaje(null);
+    const db = await getDb();
+    const [conteo] = await db.select<{ total: number }[]>(
+      `SELECT
+         (SELECT COUNT(*) FROM facturas_compra WHERE proveedor_id = $1) +
+         (SELECT COUNT(*) FROM codigos_proveedor_producto WHERE proveedor_id = $1) as total`,
+      [p.id]
+    );
+
+    if (conteo.total > 0) {
+      if (
+        !window.confirm(
+          `"${p.nombre}" ya tiene facturas o códigos de producto asociados, así que no se puede borrar del todo sin perder esos registros. ¿Lo desactivo en su lugar? Deja de aparecer para elegir en Compras, pero conserva su ficha e historial.`
+        )
+      ) {
+        return;
+      }
+      await db.execute("UPDATE proveedores SET activo = 0 WHERE id = $1", [p.id]);
+      if (seleccionado?.id === p.id) setSeleccionado({ ...p, activo: 0 });
+      await cargarProveedores();
+      return;
+    }
+
+    if (!window.confirm(`¿Eliminar "${p.nombre}" del catálogo? No tiene historial, así que se borra por completo.`)) {
+      return;
+    }
+    await db.execute("DELETE FROM proveedores WHERE id = $1", [p.id]);
+    if (seleccionado?.id === p.id) setSeleccionado(null);
+    if (editando?.id === p.id) cancelarEdicion();
+    await cargarProveedores();
+  }
+
+  async function reactivarProveedor(p: Proveedor) {
+    const db = await getDb();
+    await db.execute("UPDATE proveedores SET activo = 1 WHERE id = $1", [p.id]);
+    if (seleccionado?.id === p.id) setSeleccionado({ ...p, activo: 1 });
+    await cargarProveedores();
   }
 
   // Debounce — evita una consulta por cada letra tecleada.
@@ -45,7 +109,7 @@ export default function Proveedores() {
     );
     setSaldoPendienteUsd(saldo[0]?.total ?? 0);
     const rows = await db.select<FacturaResumen[]>(
-      "SELECT id, numero_factura, fecha, moneda, monto_total_usd, monto_pagado_usd, estado FROM facturas_compra WHERE proveedor_id = $1 ORDER BY fecha DESC LIMIT 50",
+      "SELECT id, numero_factura, fecha, moneda, monto_total_usd, monto_pagado_usd, tasa_cambio_dia, estado FROM facturas_compra WHERE proveedor_id = $1 ORDER BY fecha DESC LIMIT 50",
       [p.id]
     );
     setHistorial(rows);
@@ -60,31 +124,46 @@ export default function Proveedores() {
     }
     const db = await getDb();
     try {
-      await db.execute(
-        "INSERT INTO proveedores (id, nombre, rif, direccion, telefono) VALUES ($1,$2,$3,$4,$5)",
-        [crypto.randomUUID(), nombre, rif, direccion || null, telefono || null]
-      );
+      if (editando) {
+        await db.execute("UPDATE proveedores SET nombre = $1, rif = $2, direccion = $3, telefono = $4 WHERE id = $5", [
+          nombre,
+          rif,
+          direccion || null,
+          telefono || null,
+          editando.id,
+        ]);
+        if (seleccionado?.id === editando.id) {
+          setSeleccionado({ ...seleccionado, nombre, rif, direccion: direccion || null, telefono: telefono || null });
+        }
+      } else {
+        await db.execute(
+          "INSERT INTO proveedores (id, nombre, rif, direccion, telefono) VALUES ($1,$2,$3,$4,$5)",
+          [crypto.randomUUID(), nombre, rif, direccion || null, telefono || null]
+        );
+      }
     } catch (e) {
-      setMensaje(`No se pudo crear el proveedor (¿RIF repetido?): ${String(e)}`);
+      setMensaje(`No se pudo guardar el proveedor (¿RIF repetido?): ${String(e)}`);
       return;
     }
-    setNombre("");
-    setRif("");
-    setDireccion("");
-    setTelefono("");
+    cancelarEdicion();
     await cargarProveedores();
   }
 
   return (
     <div className="venta-layout">
       <div className="card">
-        <h2>Nuevo proveedor</h2>
+        <h2>{editando ? `Editar proveedor` : "Nuevo proveedor"}</h2>
         <form className="form-row" onSubmit={guardarProveedor}>
           <input placeholder="Nombre" value={nombre} onChange={(e) => setNombre(e.target.value)} required />
           <input placeholder="RIF" value={rif} onChange={(e) => setRif(e.target.value)} required />
           <input placeholder="Dirección (opcional)" value={direccion} onChange={(e) => setDireccion(e.target.value)} />
           <input placeholder="Teléfono (opcional)" value={telefono} onChange={(e) => setTelefono(e.target.value)} />
-          <button type="submit">Guardar</button>
+          <button type="submit">{editando ? "Guardar cambios" : "Guardar"}</button>
+          {editando && (
+            <button type="button" className="link-btn" onClick={cancelarEdicion}>
+              cancelar
+            </button>
+          )}
         </form>
         {mensaje && <p className="error">{mensaje}</p>}
 
@@ -106,12 +185,27 @@ export default function Proveedores() {
           <tbody>
             {proveedores.map((p) => (
               <tr key={p.id}>
-                <td>{p.nombre}</td>
+                <td>
+                  {p.nombre}
+                  {!p.activo && <span className="hint"> (inactivo)</span>}
+                </td>
                 <td>{p.rif}</td>
                 <td>
                   <button className="link-btn" onClick={() => abrirFicha(p)}>
                     ver ficha
-                  </button>
+                  </button>{" "}
+                  <button className="link-btn" onClick={() => editarProveedor(p)}>
+                    editar
+                  </button>{" "}
+                  {p.activo ? (
+                    <button className="link-btn link-btn-danger" onClick={() => eliminarProveedor(p)}>
+                      eliminar
+                    </button>
+                  ) : (
+                    <button className="link-btn" onClick={() => reactivarProveedor(p)}>
+                      reactivar
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
@@ -151,7 +245,9 @@ export default function Proveedores() {
                   <th>Factura</th>
                   <th>Fecha</th>
                   <th>Total USD</th>
+                  <th>Total Bs</th>
                   <th>Pagado USD</th>
+                  <th>Pagado Bs</th>
                   <th>Estado</th>
                 </tr>
               </thead>
@@ -161,13 +257,15 @@ export default function Proveedores() {
                     <td>{f.numero_factura}</td>
                     <td>{new Date(f.fecha).toLocaleDateString("es-VE")}</td>
                     <td>{f.monto_total_usd.toFixed(2)}</td>
+                    <td>{(f.monto_total_usd * f.tasa_cambio_dia).toFixed(2)}</td>
                     <td>{f.monto_pagado_usd.toFixed(2)}</td>
+                    <td>{(f.monto_pagado_usd * f.tasa_cambio_dia).toFixed(2)}</td>
                     <td>{f.estado}</td>
                   </tr>
                 ))}
                 {historial.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="empty">
+                    <td colSpan={7} className="empty">
                       Sin facturas registradas todavía.
                     </td>
                   </tr>

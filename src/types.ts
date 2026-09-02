@@ -99,6 +99,7 @@ export type Proveedor = {
   rif: string;
   direccion: string | null;
   telefono: string | null;
+  activo: number;
 };
 
 // Los campos siguen el mismo orden en que aparecen en una factura de
@@ -161,6 +162,21 @@ export type FacturaExtraidaIA = {
   numero_factura: string | null;
   moneda: string | null;
   items: ItemExtraidoIA[];
+};
+
+// Lo que devuelve el comando de Rust sugerir_reposicion.
+export type CandidatoReposicion = {
+  producto_id: string;
+  nombre: string;
+  stock_actual: number;
+  venta_diaria_promedio: number;
+  dias_restantes: number | null;
+  cantidad_sugerida: number;
+};
+
+export type SugerenciaReposicion = {
+  candidatos: CandidatoReposicion[];
+  resumen_ia: string | null;
 };
 
 export type ClienteDeudor = {
@@ -227,6 +243,7 @@ export type FacturaResumen = {
   moneda: string;
   monto_total_usd: number;
   monto_pagado_usd: number;
+  tasa_cambio_dia: number;
   estado: string;
 };
 

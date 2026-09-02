@@ -11,6 +11,7 @@ import {
   LineaFacturaBorrador,
   Producto,
   Proveedor,
+  SugerenciaReposicion,
 } from "../types";
 import { fechaHoraVenezuela } from "../fecha";
 import { normalizarTexto, sqlSinAcentos } from "../busqueda";
@@ -40,6 +41,23 @@ export default function Compras({
   const [geminiKeyInput, setGeminiKeyInput] = useState("");
   const [escaneando, setEscaneando] = useState(false);
   const [avisoEscaneo, setAvisoEscaneo] = useState<string | null>(null);
+
+  // --- Sugerencia de reposición con IA ---
+  const [sugerencia, setSugerencia] = useState<SugerenciaReposicion | null>(null);
+  const [generandoSugerencia, setGenerandoSugerencia] = useState(false);
+  const [errorSugerencia, setErrorSugerencia] = useState<string | null>(null);
+
+  async function generarSugerencia() {
+    setGenerandoSugerencia(true);
+    setErrorSugerencia(null);
+    try {
+      setSugerencia(await invoke<SugerenciaReposicion>("sugerir_reposicion"));
+    } catch (e) {
+      setErrorSugerencia(`No se pudo generar la sugerencia: ${String(e)}`);
+    } finally {
+      setGenerandoSugerencia(false);
+    }
+  }
 
   const [proveedores, setProveedores] = useState<Proveedor[]>([]);
   const [proveedorId, setProveedorId] = useState<string>("");
@@ -98,7 +116,7 @@ export default function Compras({
 
   async function cargarProveedores() {
     const db = await getDb();
-    const rows = await db.select<Proveedor[]>("SELECT * FROM proveedores ORDER BY nombre");
+    const rows = await db.select<Proveedor[]>("SELECT * FROM proveedores WHERE activo = 1 ORDER BY nombre");
     setProveedores(rows);
   }
 
@@ -806,6 +824,60 @@ export default function Compras({
       </div>
 
       <div className="card">
+        <h2>Sugerencia de reposición con IA</h2>
+        <p className="hint">
+          Calcula qué productos conviene reponer según el stock actual y la venta de los últimos
+          30 días.
+          {!config.gemini_api_key && " Configura tu clave de Gemini arriba para que además incluya un resumen priorizado."}
+        </p>
+        <button type="button" onClick={generarSugerencia} disabled={generandoSugerencia}>
+          {generandoSugerencia ? "Analizando ventas…" : "Generar sugerencia"}
+        </button>
+        {errorSugerencia && <p className="error">{errorSugerencia}</p>}
+
+        {sugerencia && (
+          <>
+            {sugerencia.resumen_ia && (
+              <p className="aviso-credito" style={{ marginTop: 10, whiteSpace: "pre-wrap" }}>
+                {sugerencia.resumen_ia}
+              </p>
+            )}
+            <div style={{ overflowX: "auto", marginTop: 10 }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Producto</th>
+                    <th>Stock actual</th>
+                    <th>Venta prom./día</th>
+                    <th>Días de stock restante</th>
+                    <th>Cantidad sugerida</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sugerencia.candidatos.map((c) => (
+                    <tr key={c.producto_id}>
+                      <td>{c.nombre}</td>
+                      <td>{formatearStock(c.stock_actual)}</td>
+                      <td>{c.venta_diaria_promedio.toFixed(2)}</td>
+                      <td>{c.dias_restantes === null ? "—" : c.dias_restantes.toFixed(0)}</td>
+                      <td>{formatearStock(c.cantidad_sugerida)}</td>
+                    </tr>
+                  ))}
+                  {sugerencia.candidatos.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="empty">
+                        No hay productos que necesiten reposición ahora mismo.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="card">
         <div className="paso-titulo">
           <span className="paso-numero">1</span>
           <h2 style={{ margin: 0 }}>Proveedor</h2>
@@ -1318,6 +1390,7 @@ export default function Compras({
                 <th>Total USD</th>
                 <th>Total Bs</th>
                 <th>Pagado USD</th>
+                <th>Pagado Bs</th>
                 <th>Estado</th>
                 <th></th>
               </tr>
@@ -1333,6 +1406,7 @@ export default function Compras({
                     <td>{f.monto_total_usd.toFixed(2)}</td>
                     <td>{(f.monto_total_usd * f.tasa_cambio_dia).toFixed(2)}</td>
                     <td>{f.monto_pagado_usd.toFixed(2)}</td>
+                    <td>{(f.monto_pagado_usd * f.tasa_cambio_dia).toFixed(2)}</td>
                     <td>{f.estado}</td>
                     <td>
                       <button className="link-btn" onClick={() => toggleDetalleFactura(f.id)}>
@@ -1356,7 +1430,7 @@ export default function Compras({
                   </tr>
                   {facturaDetalleAbierta === f.id && (
                     <tr>
-                      <td colSpan={9}>
+                      <td colSpan={10}>
                         <table>
                           <thead>
                             <tr>
@@ -1410,7 +1484,7 @@ export default function Compras({
               ))}
               {facturas.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="empty">
+                  <td colSpan={10} className="empty">
                     Sin facturas registradas todavía.
                   </td>
                 </tr>

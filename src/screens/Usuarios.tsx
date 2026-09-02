@@ -142,12 +142,38 @@ export default function Usuarios({ usuarioActual }: { usuarioActual: Usuario }) 
     await cargarVendedores();
   }
 
-  async function toggleActivoVendedor(v: Vendedor) {
-    if (v.activo && !window.confirm(`¿Eliminar al vendedor "${v.nombre}"? Deja de aparecer para elegir en Venta, pero las ventas ya hechas conservan su nombre.`)) {
+  // Un vendedor solo se puede borrar del todo si nunca hizo ninguna venta —
+  // si tiene historia, borrarlo del todo no rompe nada (el ticket viejo
+  // conserva su nombre por separado en vendedor_nombre), pero igual se
+  // ofrece desactivarlo en su lugar para no perder de vista que existió.
+  async function eliminarVendedor(v: Vendedor) {
+    setMensaje(null);
+    const db = await getDb();
+    const [conteo] = await db.select<{ total: number }[]>("SELECT COUNT(*) as total FROM ventas WHERE vendedor_id = $1", [
+      v.id,
+    ]);
+
+    if (conteo.total > 0) {
+      if (
+        !window.confirm(
+          `"${v.nombre}" ya tiene ventas registradas, así que no se puede borrar del todo. ¿Lo desactivo en su lugar? Deja de aparecer para elegir en Venta, pero las ventas ya hechas conservan su nombre.`
+        )
+      ) {
+        return;
+      }
+      await db.execute("UPDATE vendedores SET activo = 0 WHERE id = $1", [v.id]);
+      await cargarVendedores();
       return;
     }
+
+    if (!window.confirm(`¿Eliminar a "${v.nombre}" del todo? No tiene ventas registradas.`)) return;
+    await db.execute("DELETE FROM vendedores WHERE id = $1", [v.id]);
+    await cargarVendedores();
+  }
+
+  async function reactivarVendedor(v: Vendedor) {
     const db = await getDb();
-    await db.execute("UPDATE vendedores SET activo = $1 WHERE id = $2", [v.activo ? 0 : 1, v.id]);
+    await db.execute("UPDATE vendedores SET activo = 1 WHERE id = $1", [v.id]);
     await cargarVendedores();
   }
 
@@ -264,11 +290,13 @@ export default function Usuarios({ usuarioActual }: { usuarioActual: Usuario }) 
                   </span>
                 </td>
                 <td>
-                  <button
-                    className={`link-btn ${v.activo ? "link-btn-danger" : ""}`}
-                    onClick={() => toggleActivoVendedor(v)}
-                  >
-                    {v.activo ? "eliminar" : "reactivar"}
+                  {!v.activo && (
+                    <button className="link-btn" onClick={() => reactivarVendedor(v)}>
+                      reactivar
+                    </button>
+                  )}
+                  <button className="link-btn link-btn-danger" onClick={() => eliminarVendedor(v)}>
+                    eliminar
                   </button>
                 </td>
               </tr>

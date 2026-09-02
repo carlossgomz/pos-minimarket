@@ -426,7 +426,7 @@ export default function Inventario({
                       <td>
                         <input
                           className="cant-input"
-                          style={{ width: 250 }}
+                          style={{ width: Math.max(250, p.nombre.length * 8 + 24) }}
                           defaultValue={p.nombre}
                           onBlur={(e) => actualizarNombre(p, e.target.value)}
                         />

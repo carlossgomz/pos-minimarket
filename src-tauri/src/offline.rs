@@ -261,9 +261,11 @@ async fn refrescar_cache(conn_remota: &libsql::Connection, cache: &EstadoCache) 
                     placeholders.join(", ")
                 ));
             }
-            let valores: Vec<libsql::Value> =
-                (0..n).map(|i| fila.get_value(i).unwrap()).collect();
-            tx.execute(insert_sql.as_ref().unwrap(), valores)
+            let valores: Vec<libsql::Value> = (0..n)
+                .map(|i| fila.get_value(i).map_err(|e| e.to_string()))
+                .collect::<Result<_, _>>()?;
+            let insert_sql = insert_sql.as_ref().ok_or("insert_sql sin construir")?;
+            tx.execute(insert_sql, valores)
                 .await
                 .map_err(|e| e.to_string())?;
         }

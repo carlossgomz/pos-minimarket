@@ -294,8 +294,8 @@ function CuentasPorCobrar({ config, esAdmin }: { config: ConfigRow; esAdmin: boo
                                       <tr>
                                         <th>Producto</th>
                                         <th>Cant.</th>
-                                        <th>Precio Bs</th>
-                                        <th>Subtotal Bs</th>
+                                        <th>Precio USD</th>
+                                        <th>Subtotal USD</th>
                                       </tr>
                                     </thead>
                                     <tbody>
@@ -303,8 +303,8 @@ function CuentasPorCobrar({ config, esAdmin }: { config: ConfigRow; esAdmin: boo
                                         <tr key={i}>
                                           <td>{it.producto_nombre}</td>
                                           <td>{it.cantidad}</td>
-                                          <td>{it.precio_unit_bs.toFixed(2)}</td>
-                                          <td>{it.subtotal_bs.toFixed(2)}</td>
+                                          <td>{(it.precio_unit_bs / v.tasa_cambio_dia).toFixed(2)}</td>
+                                          <td>{(it.subtotal_bs / v.tasa_cambio_dia).toFixed(2)}</td>
                                         </tr>
                                       ))}
                                       {itemsDetalle.length === 0 && (
@@ -1255,6 +1255,7 @@ type CreditoPagado = {
   numero_ticket: string;
   cliente_nombre: string | null;
   cliente_cedula: string | null;
+  tasa_cambio_dia: number;
 };
 
 // Historial de abonos/pagos de crédito ya recibidos de clientes — separado
@@ -1272,7 +1273,7 @@ function CreditosPagados({ esAdmin }: { esAdmin: boolean }) {
     const term = busqueda.trim();
     const rows = await db.select<CreditoPagado[]>(
       `SELECT c.id, c.venta_id, c.monto_usd, c.monto_bs, c.metodo, c.created_at,
-              v.numero_ticket, v.cliente_nombre, v.cliente_cedula
+              v.numero_ticket, v.cliente_nombre, v.cliente_cedula, v.tasa_cambio_dia
        FROM cobros_cliente c JOIN ventas v ON v.id = c.venta_id
        WHERE ${sqlSinAcentos("v.cliente_nombre")} LIKE $1 OR v.cliente_cedula LIKE $2
        ORDER BY c.created_at DESC LIMIT 200`,
@@ -1393,8 +1394,8 @@ function CreditosPagados({ esAdmin }: { esAdmin: boolean }) {
                           <tr>
                             <th>Producto</th>
                             <th>Cant.</th>
-                            <th>Precio Bs</th>
-                            <th>Subtotal Bs</th>
+                            <th>Precio USD</th>
+                            <th>Subtotal USD</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1402,8 +1403,8 @@ function CreditosPagados({ esAdmin }: { esAdmin: boolean }) {
                             <tr key={i}>
                               <td>{it.producto_nombre}</td>
                               <td>{it.cantidad}</td>
-                              <td>{it.precio_unit_bs.toFixed(2)}</td>
-                              <td>{it.subtotal_bs.toFixed(2)}</td>
+                              <td>{(it.precio_unit_bs / c.tasa_cambio_dia).toFixed(2)}</td>
+                              <td>{(it.subtotal_bs / c.tasa_cambio_dia).toFixed(2)}</td>
                             </tr>
                           ))}
                           {itemsDetalle.length === 0 && (

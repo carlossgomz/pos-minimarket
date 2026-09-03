@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getDb } from "../db";
 import {
@@ -20,14 +20,8 @@ function hoyISO() {
   return fechaHoraVenezuela().slice(0, 10);
 }
 
-function haceNDias(n: number) {
-  const d = new Date(`${hoyISO()}T00:00:00`);
-  d.setDate(d.getDate() - n);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
 export default function Facturas({ config, esAdmin }: { config: ConfigRow; esAdmin: boolean }) {
-  const [desde, setDesde] = useState(haceNDias(30));
+  const [desde, setDesde] = useState(hoyISO());
   const [hasta, setHasta] = useState(hoyISO());
   const [busqueda, setBusqueda] = useState("");
   const [metodoFiltro, setMetodoFiltro] = useState("");
@@ -41,6 +35,11 @@ export default function Facturas({ config, esAdmin }: { config: ConfigRow; esAdm
   const [editandoItems, setEditandoItems] = useState(false);
   const [mensajeEliminar, setMensajeEliminar] = useState<string | null>(null);
   const [repartidores, setRepartidores] = useState<Repartidor[]>([]);
+
+  const detalleRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (seleccionada) detalleRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [seleccionada]);
 
   useEffect(() => {
     (async () => {
@@ -229,65 +228,67 @@ export default function Facturas({ config, esAdmin }: { config: ConfigRow; esAdm
           </select>
         </div>
 
-        <table>
-          <thead>
-            <tr>
-              <th>Ticket</th>
-              <th>Fecha</th>
-              <th>Cliente</th>
-              <th>Vendedor</th>
-              <th>Total Bs</th>
-              <th>Estado</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {facturas.map((f) => (
-              <tr key={f.id}>
-                <td>
-                  {f.numero_ticket}
-                  {f.canal === "DELIVERY" && (
-                    <span className="badge badge-ok" style={{ marginLeft: 6 }}>
-                      Delivery
-                    </span>
-                  )}
-                </td>
-                <td>
-                  {f.estado === "CREDITO_PAGADO" && f.fecha_ultimo_pago ? (
-                    <>
-                      <span className="hint" style={{ margin: 0 }}>
-                        Crédito otorgado: {formatearFechaHora(f.fecha_hora)}
-                      </span>
-                      <br />
-                      Crédito pagado: {formatearFechaHora(f.fecha_ultimo_pago)}
-                    </>
-                  ) : (
-                    formatearFechaHora(f.fecha_hora)
-                  )}
-                </td>
-                <td>{f.cliente_nombre ?? "Consumidor final"}</td>
-                <td>{f.vendedor_nombre ?? "—"}</td>
-                <td>{f.total_bs.toFixed(2)}</td>
-                <td>{f.estado}</td>
-                <td>
-                  <button className="link-btn" onClick={() => abrirFactura(f.id)}>
-                    ver
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {facturas.length === 0 && (
+        <div style={{ maxHeight: 480, overflowY: "auto" }}>
+          <table>
+            <thead>
               <tr>
-                <td colSpan={7} className="empty">
-                  Sin facturas en este rango/búsqueda.
-                </td>
+                <th>Ticket</th>
+                <th>Fecha</th>
+                <th>Cliente</th>
+                <th>Vendedor</th>
+                <th>Total Bs</th>
+                <th>Estado</th>
+                <th></th>
               </tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {facturas.map((f) => (
+                <tr key={f.id}>
+                  <td>
+                    {f.numero_ticket}
+                    {f.canal === "DELIVERY" && (
+                      <span className="badge badge-ok" style={{ marginLeft: 6 }}>
+                        Delivery
+                      </span>
+                    )}
+                  </td>
+                  <td>
+                    {f.estado === "CREDITO_PAGADO" && f.fecha_ultimo_pago ? (
+                      <>
+                        <span className="hint" style={{ margin: 0 }}>
+                          Crédito otorgado: {formatearFechaHora(f.fecha_hora)}
+                        </span>
+                        <br />
+                        Crédito pagado: {formatearFechaHora(f.fecha_ultimo_pago)}
+                      </>
+                    ) : (
+                      formatearFechaHora(f.fecha_hora)
+                    )}
+                  </td>
+                  <td>{f.cliente_nombre ?? "Consumidor final"}</td>
+                  <td>{f.vendedor_nombre ?? "—"}</td>
+                  <td>{f.total_bs.toFixed(2)}</td>
+                  <td>{f.estado}</td>
+                  <td>
+                    <button className="link-btn" onClick={() => abrirFactura(f.id)}>
+                      ver
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {facturas.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="empty">
+                    Sin facturas en este rango/búsqueda.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      <div className="card">
+      <div className="card" ref={detalleRef}>
         {!seleccionada ? (
           <p className="hint">Selecciona una factura para ver el detalle.</p>
         ) : (

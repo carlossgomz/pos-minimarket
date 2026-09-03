@@ -61,9 +61,33 @@ export default function Proveedores() {
 
   async function eliminarProveedor(p: Proveedor) {
     setMensaje(null);
-    if (!window.confirm(`¿Eliminar a "${p.nombre}" del todo? No se puede deshacer.`)) return;
     const db = await getDb();
-    await db.execute("DELETE FROM proveedores WHERE id = $1", [p.id]);
+
+    // Antes esto fallaba en silencio: DELETE chocaba con la referencia
+    // desde facturas_compra y no pasaba nada visible para quien hizo clic
+    // en "eliminar". Se chequea antes para poder explicar por qué, en vez
+    // de dejar que el error de la base llegue sin manejar. Solo cuenta
+    // facturas_compra (historial real) — codigos_proveedor_producto es
+    // memoria de "código X = este producto" que puede quedar huérfana si
+    // se borró la factura que la generó, así que no bloquea, se limpia
+    // sola al borrar el proveedor.
+    const [conteo] = await db.select<{ total: number }[]>(
+      "SELECT COUNT(*) as total FROM facturas_compra WHERE proveedor_id = $1",
+      [p.id]
+    );
+    if (conteo.total > 0) {
+      setMensaje(`"${p.nombre}" tiene facturas de compra registradas — no se puede eliminar sin perder ese historial.`);
+      return;
+    }
+
+    if (!window.confirm(`¿Eliminar a "${p.nombre}" del todo? No se puede deshacer.`)) return;
+    try {
+      await db.execute("DELETE FROM codigos_proveedor_producto WHERE proveedor_id = $1", [p.id]);
+      await db.execute("DELETE FROM proveedores WHERE id = $1", [p.id]);
+    } catch (e) {
+      setMensaje(`No se pudo eliminar: ${String(e)}`);
+      return;
+    }
     if (seleccionado?.id === p.id) setSeleccionado(null);
     if (editando?.id === p.id) cancelarEdicion();
     await cargarProveedores();

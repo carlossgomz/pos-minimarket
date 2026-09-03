@@ -152,23 +152,42 @@ async fn llamar_gemini(
     );
 
     let cliente = reqwest::Client::new();
-    let respuesta = cliente
-        .post(&url)
-        .header("x-goog-api-key", api_key)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("No se pudo contactar a Gemini: {e}"))?;
 
-    let status = respuesta.status();
-    let texto = respuesta.text().await.map_err(|e| e.to_string())?;
+    // 503 ("high demand, try again later") es el propio consejo de Gemini
+    // en el mensaje de error — casi siempre se resuelve solo unos segundos
+    // después, así que unos pocos reintentos evitan que el usuario tenga
+    // que volver a escanear la factura a mano. Otros códigos (400, 401,
+    // etc.) no se benefician de reintentar, así que solo se reintenta 503.
+    const INTENTOS: u32 = 3;
+    let mut ultimo_error = String::new();
+    for intento in 1..=INTENTOS {
+        let respuesta = cliente
+            .post(&url)
+            .header("x-goog-api-key", api_key)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("No se pudo contactar a Gemini: {e}"))?;
 
-    if !status.is_success() {
-        return Err(format!("Gemini devolvió un error ({status}): {texto}"));
+        let status = respuesta.status();
+        let texto = respuesta.text().await.map_err(|e| e.to_string())?;
+
+        if status.is_success() {
+            return parsear_respuesta_gemini(&texto);
+        }
+
+        ultimo_error = format!("Gemini devolvió un error ({status}): {texto}");
+        if status.as_u16() != 503 || intento == INTENTOS {
+            return Err(ultimo_error);
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(2 * intento as u64)).await;
     }
+    Err(ultimo_error)
+}
 
+fn parsear_respuesta_gemini(texto: &str) -> Result<String, String> {
     let cruda: serde_json::Value =
-        serde_json::from_str(&texto).map_err(|e| format!("Respuesta inesperada de Gemini: {e}"))?;
+        serde_json::from_str(texto).map_err(|e| format!("Respuesta inesperada de Gemini: {e}"))?;
 
     cruda
         .get("candidates")

@@ -16,6 +16,7 @@ fn main() {
                 "sugerir_reposicion",
                 "confirmar_venta",
                 "editar_venta_items",
+                "editar_venta_pagos",
                 "eliminar_venta",
                 "ajustar_stock",
                 "registrar_abono_cliente",

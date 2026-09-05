@@ -575,6 +575,90 @@ pub async fn editar_venta_items(
     Ok(())
 }
 
+/// Reemplaza las líneas de pago (no-CRÉDITO) de una venta ya registrada —
+/// pensado para cuando la caja se equivocó de método de pago, o cuando el
+/// cliente pagó con más de un método y no quedó registrado así. Solo admin
+/// (se valida en el frontend). La suma de los montos nuevos debe coincidir
+/// con la suma de los montos viejos (tolerancia de 1 centavo): esto es una
+/// REDISTRIBUCIÓN entre métodos, no una forma de cambiar cuánto se cobró —
+/// para eso está editar_venta_items (que si cambia el total, ajusta el
+/// pendiente a crédito, no los pagos ya hechos). La fila sintética
+/// "CREDITO" (el saldo pendiente de una venta a crédito) nunca se toca acá.
+#[tauri::command]
+pub async fn editar_venta_pagos(
+    app: tauri::AppHandle,
+    venta_id: String,
+    pagos: Vec<PagoVentaInput>,
+) -> Result<(), String> {
+    if pagos.is_empty() {
+        return Err("La venta debe tener al menos un pago.".to_string());
+    }
+    for pago in &pagos {
+        if pago.monto_bs <= 0.0 {
+            return Err("Un pago tiene un monto inválido.".to_string());
+        }
+        if pago.metodo.trim().is_empty() {
+            return Err("Un pago no tiene método.".to_string());
+        }
+    }
+
+    let conn = conexion(&app).await?;
+    let tx = conn.transaction().await.map_err(|e| e.to_string())?;
+
+    let existe = tx
+        .query("SELECT id FROM ventas WHERE id = ?1", libsql::params![venta_id.clone()])
+        .await
+        .map_err(|e| e.to_string())?
+        .next()
+        .await
+        .map_err(|e| e.to_string())?;
+    if existe.is_none() {
+        return Err("La venta no existe.".to_string());
+    }
+    drop(existe);
+
+    let mut filas_viejas = tx
+        .query(
+            "SELECT monto_bs FROM pagos WHERE venta_id = ?1 AND metodo != 'CREDITO'",
+            libsql::params![venta_id.clone()],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut suma_vieja = 0.0;
+    while let Some(fila) = filas_viejas.next().await.map_err(|e| e.to_string())? {
+        let monto: f64 = fila.get(0).map_err(|e| e.to_string())?;
+        suma_vieja += monto;
+    }
+    drop(filas_viejas);
+
+    let suma_nueva: f64 = pagos.iter().map(|p| p.monto_bs).sum();
+    if (suma_nueva - suma_vieja).abs() > 0.01 {
+        return Err(format!(
+            "La suma de los pagos nuevos (Bs {suma_nueva:.2}) no coincide con lo que ya estaba cobrado (Bs {suma_vieja:.2}) — solo se puede redistribuir entre métodos, no cambiar el total cobrado."
+        ));
+    }
+
+    tx.execute(
+        "DELETE FROM pagos WHERE venta_id = ?1 AND metodo != 'CREDITO'",
+        libsql::params![venta_id.clone()],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    for pago in &pagos {
+        tx.execute(
+            "INSERT INTO pagos (id, venta_id, metodo, monto_bs, referencia)
+             VALUES (lower(hex(randomblob(16))), ?1, ?2, ?3, ?4)",
+            libsql::params![venta_id.clone(), pago.metodo.clone(), pago.monto_bs, pago.referencia.clone()],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+
+    tx.commit().await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Elimina por completo una venta ya registrada — solo admin (se valida en
 /// el frontend). Bloqueada si: vino de un pedido de delivery (hay que
 /// corregirla desde ahí, para no desincronizar con la delivery-app), o si

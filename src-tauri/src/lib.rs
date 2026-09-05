@@ -68,6 +68,7 @@ pub fn run() {
             ia::sugerir_reposicion,
             comandos::confirmar_venta,
             comandos::editar_venta_items,
+            comandos::editar_venta_pagos,
             comandos::eliminar_venta,
             comandos::ajustar_stock,
             comandos::registrar_abono_cliente,

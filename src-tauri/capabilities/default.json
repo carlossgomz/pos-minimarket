@@ -17,6 +17,7 @@
     "allow-sugerir-reposicion",
     "allow-confirmar-venta",
     "allow-editar-venta-items",
+    "allow-editar-venta-pagos",
     "allow-eliminar-venta",
     "allow-ajustar-stock",
     "allow-registrar-abono-cliente",

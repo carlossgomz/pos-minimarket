@@ -114,6 +114,15 @@ export default function Compras({
   // "editable" más abajo).
   const [editandoFacturaId, setEditandoFacturaId] = useState<string | null>(null);
 
+  // Si la tasa del día cambia mientras se está armando una factura NUEVA,
+  // que se refleje al instante — pero no si se está editando una factura
+  // YA guardada, que debe conservar su propia tasa histórica (ver carga en
+  // el efecto de editandoFacturaId más abajo).
+  useEffect(() => {
+    if (!editandoFacturaId) setTasaFactura(String(config.tasa_cambio_dia));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.tasa_cambio_dia]);
+
   async function cargarProveedores() {
     const db = await getDb();
     const rows = await db.select<Proveedor[]>("SELECT * FROM proveedores WHERE activo = 1 ORDER BY nombre");
@@ -880,92 +889,85 @@ export default function Compras({
       <div className="card">
         <div className="paso-titulo">
           <span className="paso-numero">1</span>
-          <h2 style={{ margin: 0 }}>Proveedor</h2>
+          <h2 style={{ margin: 0 }}>Proveedor y datos de la factura</h2>
         </div>
-        {!mostrarNuevoProveedor ? (
-          <div className="form-grid form-grid-ancho">
-            <Campo label="Proveedor">
-              <select value={proveedorId} onChange={(e) => setProveedorId(e.target.value)}>
-                <option value="">Selecciona un proveedor…</option>
-                {proveedores.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.nombre} — {p.rif}
-                  </option>
-                ))}
+        <div className="venta-layout">
+          <div>
+            {!mostrarNuevoProveedor ? (
+              <div className="form-grid form-grid-ancho">
+                <Campo label="Proveedor">
+                  <select value={proveedorId} onChange={(e) => setProveedorId(e.target.value)}>
+                    <option value="">Selecciona un proveedor…</option>
+                    {proveedores.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.nombre} — {p.rif}
+                      </option>
+                    ))}
+                  </select>
+                </Campo>
+                <div className="campo-boton">
+                  <button type="button" onClick={() => setMostrarNuevoProveedor(true)}>
+                    + Nuevo proveedor
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="form-grid">
+                <Campo label="Nombre">
+                  <input value={nombreProv} onChange={(e) => setNombreProv(e.target.value)} />
+                </Campo>
+                <Campo label="RIF">
+                  <input value={rifProv} onChange={(e) => setRifProv(e.target.value)} />
+                </Campo>
+                <Campo label="Dirección (opcional)">
+                  <input value={direccionProv} onChange={(e) => setDireccionProv(e.target.value)} />
+                </Campo>
+                <Campo label="Teléfono (opcional)">
+                  <input value={telefonoProv} onChange={(e) => setTelefonoProv(e.target.value)} />
+                </Campo>
+                <div className="campo-boton">
+                  <button type="button" onClick={guardarProveedor}>
+                    Guardar proveedor
+                  </button>
+                </div>
+                <div className="campo-boton">
+                  <button
+                    type="button"
+                    className="link-btn"
+                    style={{ fontSize: 14 }}
+                    onClick={() => setMostrarNuevoProveedor(false)}
+                  >
+                    cancelar
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="form-grid">
+            <Campo label="Número de factura">
+              <input value={numeroFactura} onChange={(e) => setNumeroFactura(e.target.value)} />
+            </Campo>
+            <Campo label="Moneda de la factura">
+              <select value={moneda} onChange={(e) => setMoneda(e.target.value as "USD" | "VES")}>
+                <option value="USD">USD (dólares)</option>
+                <option value="VES">Bs (bolívares)</option>
               </select>
             </Campo>
-            <div className="campo-boton">
-              <button type="button" onClick={() => setMostrarNuevoProveedor(true)}>
-                + Nuevo proveedor
-              </button>
-            </div>
+            <Campo label="Tasa del día de esta compra">
+              <input type="number" step="0.01" value={tasaFactura} onChange={(e) => setTasaFactura(e.target.value)} />
+            </Campo>
           </div>
-        ) : (
-          <div className="form-grid">
-            <Campo label="Nombre">
-              <input value={nombreProv} onChange={(e) => setNombreProv(e.target.value)} />
-            </Campo>
-            <Campo label="RIF">
-              <input value={rifProv} onChange={(e) => setRifProv(e.target.value)} />
-            </Campo>
-            <Campo label="Dirección (opcional)">
-              <input value={direccionProv} onChange={(e) => setDireccionProv(e.target.value)} />
-            </Campo>
-            <Campo label="Teléfono (opcional)">
-              <input value={telefonoProv} onChange={(e) => setTelefonoProv(e.target.value)} />
-            </Campo>
-            <div className="campo-boton">
-              <button type="button" onClick={guardarProveedor}>
-                Guardar proveedor
-              </button>
-            </div>
-            <div className="campo-boton">
-              <button
-                type="button"
-                className="link-btn"
-                style={{ fontSize: 14 }}
-                onClick={() => setMostrarNuevoProveedor(false)}
-              >
-                cancelar
-              </button>
-            </div>
-          </div>
-        )}
+        </div>
       </div>
 
       <div className="card">
         <div className="paso-titulo">
           <span className="paso-numero">2</span>
-          <h2 style={{ margin: 0 }}>Datos de la factura</h2>
-        </div>
-        <div className="form-grid">
-          <Campo label="Número de factura">
-            <input value={numeroFactura} onChange={(e) => setNumeroFactura(e.target.value)} />
-          </Campo>
-          <Campo label="Moneda de la factura">
-            <select value={moneda} onChange={(e) => setMoneda(e.target.value as "USD" | "VES")}>
-              <option value="USD">USD (dólares)</option>
-              <option value="VES">Bs (bolívares)</option>
-            </select>
-          </Campo>
-          <Campo label="Tasa del día de esta compra">
-            <input type="number" step="0.01" value={tasaFactura} onChange={(e) => setTasaFactura(e.target.value)} />
-          </Campo>
-        </div>
-      </div>
-
-      <div className="card">
-        <div className="paso-titulo">
-          <span className="paso-numero">3</span>
           <h2 style={{ margin: 0 }}>Agregar producto a la factura</h2>
         </div>
         <p className="hint">
-          Copia los datos tal cual salen en la factura del proveedor, línea por línea. Si el
-          código ya existe, se reconoce solo; si no, se crea el producto nuevo al guardar. Este
-          código es el del PROVEEDOR (el que trae su factura) — no hace falta el código de barras
-          real, eso se asigna después escaneándolo en la tienda (ver "pendientes de código de
-          barras" en Inventario). El código es <strong>opcional</strong>: si el proveedor no trae
-          uno, usa el botón "crear producto nuevo" de abajo.
+          Copia los datos tal cual salen en la factura, línea por línea — el código es el del
+          proveedor (opcional), no el código de barras real.
         </p>
 
         <div style={{ position: "relative", maxWidth: 420, marginTop: 12 }}>
@@ -1121,11 +1123,8 @@ export default function Compras({
           </div>
         </div>
         <p className="hint" style={{ marginTop: 10 }}>
-          "Precio unitario" es el precio por caja (o por unidad si no compras por caja), SIN IVA y
-          SIN descuento. "Unid. por caja" es cuántas unidades individuales trae la caja de este
-          producto. No todos los productos de una factura llevan IVA o descuento — márcalo solo si
-          corresponde a esa línea; el costo real por unidad ya los incluye (primero se resta el
-          descuento y sobre eso se calcula el IVA, igual que en una factura de papel).
+          "Precio unitario" es por caja (o por unidad), sin IVA ni descuento — se aplican solo si
+          marcas la casilla.
         </p>
 
         {precioPaqueteNum > 0 && (
@@ -1185,10 +1184,7 @@ export default function Compras({
             </button>
           </p>
         )}
-        <p className="hint">
-          Todos los valores se editan directo en su casilla — cámbialos si algo salió mal (sobre
-          todo al escanear con IA) o déjalos tal cual si están correctos.
-        </p>
+        <p className="hint">Revisa los valores si usaste el escaneo con IA — se editan directo en la casilla.</p>
         <div style={{ overflowX: "auto" }}>
           <table className="tabla-compacta">
             <thead>
@@ -1374,10 +1370,8 @@ export default function Compras({
       <div className="card">
         <h2>Facturas registradas</h2>
         <p className="hint">
-          Últimas {facturas.length} facturas de proveedor. Abre una para ver el detalle de
-          productos comprados. Solo se puede editar o eliminar una factura mientras nada de su
-          stock se haya vendido y no tenga pagos registrados al proveedor — si no, la corrección
-          segura es un ajuste de stock manual en la pestaña Movimientos.
+          Solo se puede editar o eliminar mientras nada de su stock se haya vendido ni tenga pagos
+          al proveedor.
         </p>
         <div style={{ overflowX: "auto" }}>
           <table>

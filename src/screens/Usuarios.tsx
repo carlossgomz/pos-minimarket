@@ -11,8 +11,11 @@ export default function Usuarios({ usuarioActual }: { usuarioActual: Usuario }) 
   const [rol, setRol] = useState<Rol>("CAJERO");
   const [mensaje, setMensaje] = useState<string | null>(null);
 
+  const [mostrarNuevoUsuario, setMostrarNuevoUsuario] = useState(false);
+
   const [vendedores, setVendedores] = useState<Vendedor[]>([]);
   const [nombreVendedor, setNombreVendedor] = useState("");
+  const [mostrarNuevoVendedor, setMostrarNuevoVendedor] = useState(false);
 
   const [deliveryApiUrl, setDeliveryApiUrl] = useState("");
   const [deliverySyncToken, setDeliverySyncToken] = useState("");
@@ -86,6 +89,7 @@ export default function Usuarios({ usuarioActual }: { usuarioActual: Usuario }) 
     setUsuario("");
     setPassword("");
     setRol("CAJERO");
+    setMostrarNuevoUsuario(false);
     await cargar();
   }
 
@@ -139,6 +143,7 @@ export default function Usuarios({ usuarioActual }: { usuarioActual: Usuario }) 
       nombreVendedor.trim(),
     ]);
     setNombreVendedor("");
+    setMostrarNuevoVendedor(false);
     await cargarVendedores();
   }
 
@@ -180,31 +185,52 @@ export default function Usuarios({ usuarioActual }: { usuarioActual: Usuario }) 
   return (
     <div>
       <section className="card">
-        <h2>Nuevo usuario</h2>
-        <p className="hint">
-          Administrador ve todas las secciones. Cajero solo ve Venta, Facturas, Clientes y
-          Cuentas.
-        </p>
-        <form className="form-row" onSubmit={crearUsuario}>
-          <input placeholder="Nombre" value={nombre} onChange={(e) => setNombre(e.target.value)} />
-          <input placeholder="Usuario (para entrar)" value={usuario} onChange={(e) => setUsuario(e.target.value)} />
-          <input
-            placeholder="Contraseña"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-          <select value={rol} onChange={(e) => setRol(e.target.value as Rol)}>
-            <option value="CAJERO">Cajero</option>
-            <option value="ADMIN">Administrador</option>
-          </select>
-          <button type="submit">Crear</button>
-        </form>
-        {mensaje && <p className="error">{mensaje}</p>}
-      </section>
-
-      <section className="card">
-        <h2>Usuarios</h2>
+        <div className="form-row" style={{ justifyContent: "space-between", alignItems: "center", marginBottom: mostrarNuevoUsuario ? 12 : 0 }}>
+          <h2 style={{ margin: 0 }}>Usuarios</h2>
+          {!mostrarNuevoUsuario && (
+            <button type="button" onClick={() => setMostrarNuevoUsuario(true)}>
+              + Agregar
+            </button>
+          )}
+        </div>
+        {mostrarNuevoUsuario && (
+          <>
+            <p className="hint">
+              Administrador ve todas las secciones. Cajero solo ve Venta, Facturas, Clientes y
+              Cuentas.
+            </p>
+            <form className="form-row" onSubmit={crearUsuario}>
+              <input placeholder="Nombre" value={nombre} onChange={(e) => setNombre(e.target.value)} autoFocus />
+              <input
+                placeholder="Usuario (para entrar)"
+                value={usuario}
+                onChange={(e) => setUsuario(e.target.value)}
+              />
+              <input
+                placeholder="Contraseña"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+              <select value={rol} onChange={(e) => setRol(e.target.value as Rol)}>
+                <option value="CAJERO">Cajero</option>
+                <option value="ADMIN">Administrador</option>
+              </select>
+              <button type="submit">Crear</button>
+              <button
+                type="button"
+                className="link-btn"
+                onClick={() => {
+                  setMostrarNuevoUsuario(false);
+                  setMensaje(null);
+                }}
+              >
+                cancelar
+              </button>
+            </form>
+            {mensaje && <p className="error">{mensaje}</p>}
+          </>
+        )}
         <table>
           <thead>
             <tr>
@@ -259,19 +285,34 @@ export default function Usuarios({ usuarioActual }: { usuarioActual: Usuario }) 
       </section>
 
       <section className="card">
-        <h2>Vendedores</h2>
-        <p className="hint">
-          Son los nombres que aparecen para elegir "Vendedor" arriba en Venta — no tienen usuario
-          ni contraseña propia, solo sirven para atribuir cada venta a quien atendió.
-        </p>
-        <form className="form-row" onSubmit={crearVendedor}>
-          <input
-            placeholder="Nombre del vendedor"
-            value={nombreVendedor}
-            onChange={(e) => setNombreVendedor(e.target.value)}
-          />
-          <button type="submit">Agregar</button>
-        </form>
+        <div className="form-row" style={{ justifyContent: "space-between", alignItems: "center", marginBottom: mostrarNuevoVendedor ? 12 : 0 }}>
+          <h2 style={{ margin: 0 }}>Vendedores</h2>
+          {!mostrarNuevoVendedor && (
+            <button type="button" onClick={() => setMostrarNuevoVendedor(true)}>
+              + Agregar
+            </button>
+          )}
+        </div>
+        {mostrarNuevoVendedor && (
+          <>
+            <p className="hint">
+              Son los nombres que aparecen para elegir "Vendedor" arriba en Venta — no tienen
+              usuario ni contraseña propia, solo sirven para atribuir cada venta a quien atendió.
+            </p>
+            <form className="form-row" onSubmit={crearVendedor}>
+              <input
+                placeholder="Nombre del vendedor"
+                value={nombreVendedor}
+                onChange={(e) => setNombreVendedor(e.target.value)}
+                autoFocus
+              />
+              <button type="submit">Crear</button>
+              <button type="button" className="link-btn" onClick={() => setMostrarNuevoVendedor(false)}>
+                cancelar
+              </button>
+            </form>
+          </>
+        )}
         <table>
           <thead>
             <tr>

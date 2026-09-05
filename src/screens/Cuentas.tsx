@@ -52,6 +52,12 @@ function CuentasPorCobrar({ config, esAdmin }: { config: ConfigRow; esAdmin: boo
   const [clienteAbono, setClienteAbono] = useState<ClienteDeudor | null>(null);
   const [montoBs, setMontoBs] = useState("");
   const [tasaPago, setTasaPago] = useState(String(config.tasa_cambio_dia));
+  // Si el admin cambia la tasa del día mientras esta pantalla está abierta,
+  // que se refleje al instante en vez de quedarse con la tasa de cuando se
+  // montó el componente.
+  useEffect(() => {
+    setTasaPago(String(config.tasa_cambio_dia));
+  }, [config.tasa_cambio_dia]);
   const [metodo, setMetodo] = useState("EFECTIVO");
   const [mensaje, setMensaje] = useState<string | null>(null);
 
@@ -407,6 +413,11 @@ function CuentasPorPagar({ config }: { config: ConfigRow }) {
   const [facturaAbono, setFacturaAbono] = useState<FacturaPendiente | null>(null);
   const [montoBs, setMontoBs] = useState("");
   const [tasaPago, setTasaPago] = useState(String(config.tasa_cambio_dia));
+  // Igual que en CuentasPorCobrar: que la tasa se actualice al instante si
+  // cambia mientras la pantalla ya está abierta.
+  useEffect(() => {
+    setTasaPago(String(config.tasa_cambio_dia));
+  }, [config.tasa_cambio_dia]);
   const [metodo, setMetodo] = useState("EFECTIVO");
   const [referencia, setReferencia] = useState("");
   const [mensaje, setMensaje] = useState<string | null>(null);

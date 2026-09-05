@@ -20,6 +20,8 @@ import Facturas from "./screens/Facturas";
 import Usuarios from "./screens/Usuarios";
 import Login from "./screens/Login";
 import Novedades from "./screens/Novedades";
+import ActualizacionDisponible from "./screens/ActualizacionDisponible";
+import Notificaciones, { NotificacionItem } from "./screens/Notificaciones";
 import PendientesCodigoBarras from "./screens/PendientesCodigoBarras";
 import logo from "./assets/logo.png";
 
@@ -96,6 +98,20 @@ export default function App() {
   const [actualizacion, setActualizacion] = useState<Update | null>(null);
   const [instalando, setInstalando] = useState(false);
   const [errorActualizacion, setErrorActualizacion] = useState<string | null>(null);
+
+  // Versión que el usuario eligió saltar en la ventana de "actualización
+  // disponible" — se guarda para no volver a interrumpirlo con la misma
+  // versión, pero el botoncito del header sigue disponible por si cambia
+  // de opinión más tarde.
+  const ACTUALIZACION_SALTADA_KEY = "pos-actualizacion-saltada";
+  const [actualizacionSaltada, setActualizacionSaltada] = useState<string | null>(() =>
+    localStorage.getItem(ACTUALIZACION_SALTADA_KEY)
+  );
+  function saltarActualizacion() {
+    if (!actualizacion) return;
+    localStorage.setItem(ACTUALIZACION_SALTADA_KEY, actualizacion.version);
+    setActualizacionSaltada(actualizacion.version);
+  }
 
   // "Qué hay de nuevo": justo antes de reiniciar para instalar (ver
   // instalarActualizacion) se guarda acá la versión + notas del release —
@@ -381,6 +397,16 @@ export default function App() {
       <>
         <Login config={config} onLogin={setUsuarioActual} />
         {novedades && <Novedades novedades={novedades} onCerrar={() => setNovedades(null)} />}
+        {actualizacion && actualizacion.version !== actualizacionSaltada && (
+          <ActualizacionDisponible
+            version={actualizacion.version}
+            notas={actualizacion.body ?? ""}
+            instalando={instalando}
+            error={errorActualizacion}
+            onActualizar={instalarActualizacion}
+            onSaltar={saltarActualizacion}
+          />
+        )}
         <div className="marca-dev">hecho por Carloscode_</div>
       </>
     );
@@ -411,6 +437,39 @@ export default function App() {
   // después de que un admin estuvo en "Usuarios" — cae a "venta" en vez de
   // dejar la pantalla en blanco sin ninguna pestaña resaltada.
   const tabEfectivo = pestanasVisibles.some((p) => p.key === tab) ? tab : "venta";
+
+  // Alertas de "housekeeping" agrupadas en la campana de notificaciones —
+  // ver Notificaciones.tsx. Los pedidos de delivery pendientes se quedan
+  // como botón aparte, son una alerta operativa distinta.
+  const notificaciones: NotificacionItem[] = [];
+  if (pendientesCodigo > 0) {
+    notificaciones.push({
+      key: "sin-codigo",
+      texto: `🏷 ${pendientesCodigo} sin código de barras`,
+      color: "var(--warn-text)",
+      onClick: () => setMostrarPendientesCodigo(true),
+    });
+  }
+  if (esAdmin && productosStockBajo > 0) {
+    notificaciones.push({
+      key: "stock-bajo",
+      texto: `⚠ ${productosStockBajo} en 1 unidad o agotados`,
+      color: "var(--danger-text)",
+      onClick: () => {
+        setAbrirInventarioFiltrado(true);
+        setTab("inventario");
+      },
+    });
+  }
+  if (actualizacion) {
+    notificaciones.push({
+      key: "actualizacion",
+      texto: instalando ? "Instalando…" : `⬆ Actualización disponible: v${actualizacion.version}`,
+      disabled: instalando,
+      error: errorActualizacion,
+      onClick: instalarActualizacion,
+    });
+  }
 
   return (
     <div className="page">
@@ -466,29 +525,7 @@ export default function App() {
               {estadoConexion.pendientes > 0 ? ` (${estadoConexion.pendientes} pendiente${estadoConexion.pendientes === 1 ? "" : "s"})` : ""}
             </span>
           )}
-          {pendientesCodigo > 0 && (
-            <button
-              type="button"
-              className="link-btn"
-              style={{ color: "var(--warn-text)" }}
-              onClick={() => setMostrarPendientesCodigo(true)}
-            >
-              🏷 {pendientesCodigo} sin código de barras
-            </button>
-          )}
-          {esAdmin && productosStockBajo > 0 && (
-            <button
-              type="button"
-              className="link-btn"
-              style={{ color: "var(--danger-text)" }}
-              onClick={() => {
-                setAbrirInventarioFiltrado(true);
-                setTab("inventario");
-              }}
-            >
-              ⚠ {productosStockBajo} en 1 unidad o agotados
-            </button>
-          )}
+          <Notificaciones items={notificaciones} />
           {pedidosDeliveryPendientes > 0 && (
             <button
               type="button"
@@ -506,14 +543,6 @@ export default function App() {
               📦 {pedidosDeliveryPendientes} pedido{pedidosDeliveryPendientes === 1 ? "" : "s"} de
               delivery pendiente{pedidosDeliveryPendientes === 1 ? "" : "s"}
             </button>
-          )}
-          {actualizacion && (
-            <button type="button" className="link-btn" onClick={instalarActualizacion} disabled={instalando}>
-              {instalando ? "Instalando…" : `⬆ Actualizar a ${actualizacion.version}`}
-            </button>
-          )}
-          {errorActualizacion && (
-            <span style={{ color: "var(--danger-text)", fontSize: 12 }}>{errorActualizacion}</span>
           )}
           <button
             type="button"
@@ -576,6 +605,16 @@ export default function App() {
         <PendientesCodigoBarras
           onCerrar={() => setMostrarPendientesCodigo(false)}
           onCambio={cargarPendientesCodigo}
+        />
+      )}
+      {actualizacion && actualizacion.version !== actualizacionSaltada && (
+        <ActualizacionDisponible
+          version={actualizacion.version}
+          notas={actualizacion.body ?? ""}
+          instalando={instalando}
+          error={errorActualizacion}
+          onActualizar={instalarActualizacion}
+          onSaltar={saltarActualizacion}
         />
       )}
       <div className="marca-dev">hecho por Carloscode_</div>

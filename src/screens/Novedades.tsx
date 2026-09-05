@@ -9,7 +9,7 @@
 // final — acá se limpia lo que no aporta nada dentro de la app (el
 // encabezado ya está en el título de esta ventana, el link no sirve sin
 // navegador, y "by @usuario in #123" siempre es Carlos mismo).
-function limpiarNotas(body: string): string {
+export function limpiarNotas(body: string): string {
   return body
     .split("\n")
     .filter((linea) => !linea.startsWith("## What's Changed") && !linea.startsWith("**Full Changelog**"))

@@ -15,6 +15,7 @@ import { normalizarTexto, sqlSinAcentos } from "../busqueda";
 import { fechaHoraVenezuela } from "../fecha";
 import logo from "../assets/logo.png";
 import EditorItemsVenta from "./EditorItemsVenta";
+import EditorPagosVenta from "./EditorPagosVenta";
 
 function hoyISO() {
   return fechaHoraVenezuela().slice(0, 10);
@@ -33,6 +34,7 @@ export default function Facturas({ config, esAdmin }: { config: ConfigRow; esAdm
   const [itemsEditables, setItemsEditables] = useState<FacturaVentaItemEditable[]>([]);
   const [pagos, setPagos] = useState<FacturaVentaPagoDetalle[]>([]);
   const [editandoItems, setEditandoItems] = useState(false);
+  const [editandoPagos, setEditandoPagos] = useState(false);
   const [mensajeEliminar, setMensajeEliminar] = useState<string | null>(null);
   const [repartidores, setRepartidores] = useState<Repartidor[]>([]);
 
@@ -104,6 +106,7 @@ export default function Facturas({ config, esAdmin }: { config: ConfigRow; esAdm
     );
     setSeleccionada(completa[0] ?? null);
     setEditandoItems(false);
+    setEditandoPagos(false);
 
     const itemRows = await db.select<FacturaVentaItemDetalle[]>(
       `SELECT p.nombre as producto_nombre, vi.cantidad, vi.precio_unit_bs, vi.subtotal_bs
@@ -383,7 +386,7 @@ export default function Facturas({ config, esAdmin }: { config: ConfigRow; esAdm
               </span>
             </p>
             <div className="no-print">
-              {esAdmin && (
+              {esAdmin && !editandoPagos && (
                 <p style={{ marginBottom: 4 }}>
                   Pagos — si la caja se equivocó de método (ej. marcó punto de venta y fue biopago),
                   se corrige acá:
@@ -395,7 +398,7 @@ export default function Facturas({ config, esAdmin }: { config: ConfigRow; esAdm
                     <span style={{ minWidth: 140 }}>Crédito pendiente</span>
                     <span className="hint" style={{ margin: 0 }}>Bs {p.monto_bs.toFixed(2)}</span>
                   </div>
-                ) : esAdmin ? (
+                ) : esAdmin && !editandoPagos ? (
                   <div key={p.id} className="form-row" style={{ alignItems: "center" }}>
                     <select
                       defaultValue={p.metodo}
@@ -426,7 +429,7 @@ export default function Facturas({ config, esAdmin }: { config: ConfigRow; esAdm
                       </label>
                     )}
                   </div>
-                ) : (
+                ) : !editandoPagos ? (
                   <div key={p.id} className="form-row" style={{ alignItems: "center" }}>
                     <span style={{ minWidth: 140 }}>{p.metodo.split("_").join(" ")}</span>
                     <span className="hint" style={{ margin: 0 }}>Bs {p.monto_bs.toFixed(2)}</span>
@@ -436,7 +439,24 @@ export default function Facturas({ config, esAdmin }: { config: ConfigRow; esAdm
                       </span>
                     )}
                   </div>
-                )
+                ) : null
+              )}
+              {esAdmin && !editandoPagos && pagos.some((p) => p.metodo !== "CREDITO") && (
+                <button type="button" className="link-btn" onClick={() => setEditandoPagos(true)}>
+                  dividir o corregir montos de pago
+                </button>
+              )}
+              {esAdmin && editandoPagos && (
+                <EditorPagosVenta
+                  ventaId={seleccionada.id}
+                  pagosIniciales={pagos.filter((p) => p.metodo !== "CREDITO")}
+                  onGuardado={async () => {
+                    setEditandoPagos(false);
+                    await abrirFactura(seleccionada.id);
+                    await cargarLista();
+                  }}
+                  onCancelar={() => setEditandoPagos(false)}
+                />
               )}
             </div>
             <p>Pagos: {pagos.map((p) => `${p.metodo.split("_").join(" ")} Bs ${p.monto_bs.toFixed(2)}`).join(" · ")}</p>

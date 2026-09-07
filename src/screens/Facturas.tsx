@@ -450,6 +450,7 @@ export default function Facturas({ config, esAdmin }: { config: ConfigRow; esAdm
                 <EditorPagosVenta
                   ventaId={seleccionada.id}
                   pagosIniciales={pagos.filter((p) => p.metodo !== "CREDITO")}
+                  tasaCambioDia={config.tasa_cambio_dia}
                   onGuardado={async () => {
                     setEditandoPagos(false);
                     await abrirFactura(seleccionada.id);

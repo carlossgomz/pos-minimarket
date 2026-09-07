@@ -36,6 +36,26 @@ export function gananciaUnitariaUsd(p: ProductoParaPrecio): number {
   return precioVentaUsd(p) - p.costo_actual_usd;
 }
 
+// Todo pago se guarda en una sola columna monto_bs, sin importar la
+// moneda del método — así que un pago en Divisas (dólares en efectivo)
+// necesita convertirse ANTES de guardar. Sin esto, escribir "10" en un
+// pago de $10 lo guarda como 10 Bs en vez de 10 × tasa. "DIVISAS" es el
+// único método en dólares en este sistema (lista fija METODOS_PAGO).
+export function montoBsDesdeEntrada(monedaMetodo: string, montoEscrito: number, tasaCambioDia: number): number {
+  return monedaMetodo === "USD" ? montoEscrito * tasaCambioDia : montoEscrito;
+}
+
+// Inverso: para MOSTRAR un monto ya guardado en Bs en la moneda nativa del
+// método (ej. Cuadre de Caja mostrando dólares en vez de Bs, para contar
+// billetes físicos sin sacar cuentas con la tasa del día).
+export function montoNativoDesdeBs(monedaMetodo: string, montoBs: number, tasaCambioDia: number): number {
+  return monedaMetodo === "USD" && tasaCambioDia > 0 ? montoBs / tasaCambioDia : montoBs;
+}
+
+export function monedaDeMetodo(metodo: string): string {
+  return metodo === "DIVISAS" ? "USD" : "BS";
+}
+
 // Los productos por peso (kg) acumulan ruido de punto flotante al restar
 // gramo a gramo (ej. -0.16499999999999998 en vez de -0.165) — esto es solo
 // para mostrar, redondea a 3 decimales (alcanza para gramos) sin forzar

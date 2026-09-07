@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getDb } from "../db";
-import { formatearStock, precioVentaBsHoy, precioVentaUsd } from "../precios";
+import { formatearStock, monedaDeMetodo, montoBsDesdeEntrada, precioVentaBsHoy, precioVentaUsd } from "../precios";
 import { fechaHoraVenezuela } from "../fecha";
 import { normalizarTexto, sqlSinAcentos } from "../busqueda";
 import {
@@ -627,12 +627,13 @@ export default function Venta({
   async function registrarAvance() {
     setMensajeAvance(null);
     const montoEfectivo = Number(avanceMontoEfectivo);
-    const montoCobrado = Number(avanceMontoCobrado);
+    const montoCobradoEscrito = Number(avanceMontoCobrado);
+    const montoCobrado = montoBsDesdeEntrada(monedaDeMetodo(avanceMetodoCobro), montoCobradoEscrito, config.tasa_cambio_dia);
     if (!montoEfectivo || montoEfectivo <= 0) {
       setMensajeAvance("El efectivo entregado debe ser mayor a 0.");
       return;
     }
-    if (!montoCobrado || montoCobrado <= 0) {
+    if (!montoCobradoEscrito || montoCobradoEscrito <= 0) {
       setMensajeAvance("El monto cobrado debe ser mayor a 0.");
       return;
     }
@@ -890,10 +891,11 @@ export default function Venta({
   }
 
   function agregarPago() {
-    const monto = Number(montoNuevo);
-    if (!monto || monto <= 0) return;
+    const montoEscrito = Number(montoNuevo);
+    if (!montoEscrito || montoEscrito <= 0) return;
+    const monto_bs = montoBsDesdeEntrada(monedaDeMetodo(metodoNuevo), montoEscrito, config.tasa_cambio_dia);
     actualizarActivo({
-      pagos: [...activo.pagos, { metodo: metodoNuevo, monto_bs: monto, referencia: refNueva || undefined }],
+      pagos: [...activo.pagos, { metodo: metodoNuevo, monto_bs, referencia: refNueva || undefined }],
     });
     setMontoNuevo("");
     setRefNueva("");
@@ -1644,7 +1646,7 @@ export default function Venta({
                 disabled={guardando}
                 onClick={() => cobrarRapido("DIVISAS")}
               >
-                Divisas · Bs {restante.toFixed(2)}
+                Divisas · Bs {restante.toFixed(2)} (~${(restante / config.tasa_cambio_dia).toFixed(2)})
               </button>
               <button
                 type="button"
@@ -1671,7 +1673,7 @@ export default function Venta({
               ))}
             </select>
             <input
-              placeholder="Monto Bs"
+              placeholder={monedaDeMetodo(metodoNuevo) === "USD" ? "Monto $" : "Monto Bs"}
               type="number"
               step="0.01"
               value={montoNuevo}
@@ -1928,7 +1930,7 @@ export default function Venta({
                 />
               </div>
               <div className="campo">
-                <label>Monto cobrado (Bs)</label>
+                <label>Monto cobrado {monedaDeMetodo(avanceMetodoCobro) === "USD" ? "($)" : "(Bs)"}</label>
                 <input
                   type="number"
                   step="0.01"
@@ -1968,9 +1970,18 @@ export default function Venta({
                 </button>
               </div>
             </div>
-            {avanceMontoEfectivo && avanceMontoCobrado && Number(avanceMontoCobrado) > Number(avanceMontoEfectivo) && (
-              <p className="hint">Comisión: Bs {(Number(avanceMontoCobrado) - Number(avanceMontoEfectivo)).toFixed(2)}</p>
-            )}
+            {avanceMontoEfectivo &&
+              avanceMontoCobrado &&
+              (() => {
+                const cobradoBs = montoBsDesdeEntrada(
+                  monedaDeMetodo(avanceMetodoCobro),
+                  Number(avanceMontoCobrado),
+                  config.tasa_cambio_dia
+                );
+                const efectivoBs = Number(avanceMontoEfectivo);
+                if (cobradoBs <= efectivoBs) return null;
+                return <p className="hint">Comisión: Bs {(cobradoBs - efectivoBs).toFixed(2)}</p>;
+              })()}
             {mensajeAvance && <p className="error">{mensajeAvance}</p>}
 
             <table>

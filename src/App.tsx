@@ -593,7 +593,7 @@ export default function App() {
       {esAdmin && tabEfectivo === "movimientos" && <Movimientos config={config} />}
       {esAdmin && tabEfectivo === "compras" && <Compras config={config} onConfigActualizado={cargarConfig} />}
       {tabEfectivo === "cuentas" && <Cuentas config={config} esAdmin={esAdmin} />}
-      {tabEfectivo === "cuadre" && <CuadreCaja />}
+      {tabEfectivo === "cuadre" && <CuadreCaja config={config} />}
       {tabEfectivo === "clientes" && <Clientes />}
       {esAdmin && tabEfectivo === "proveedores" && <Proveedores />}
       {esAdmin && tabEfectivo === "usuarios" && <Usuarios usuarioActual={usuarioActual} />}

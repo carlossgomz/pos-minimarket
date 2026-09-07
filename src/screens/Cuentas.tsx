@@ -16,6 +16,7 @@ import {
 import EditorItemsVenta from "./EditorItemsVenta";
 import { normalizarTexto, sqlSinAcentos } from "../busqueda";
 import { fechaHoraVenezuela } from "../fecha";
+import { monedaDeMetodo } from "../precios";
 
 const EPS = 0.01;
 // Comisión de delivery: $0.10 por cada producto entregado (por WhatsApp o
@@ -173,9 +174,9 @@ function CuentasPorCobrar({ config, esAdmin }: { config: ConfigRow; esAdmin: boo
 
   async function confirmarAbono() {
     if (!clienteAbono) return;
-    const bs = Number(montoBs);
+    const montoEscrito = Number(montoBs);
     const tasa = Number(tasaPago);
-    if (!bs || bs <= 0) {
+    if (!montoEscrito || montoEscrito <= 0) {
       setMensaje("El monto debe ser mayor a 0.");
       return;
     }
@@ -183,7 +184,8 @@ function CuentasPorCobrar({ config, esAdmin }: { config: ConfigRow; esAdmin: boo
       setMensaje("La tasa del día debe ser mayor a 0.");
       return;
     }
-    const usd = bs / tasa;
+    const monedaMetodo = monedaDeMetodo(metodo);
+    const usd = monedaMetodo === "USD" ? montoEscrito : montoEscrito / tasa;
     if (usd > clienteAbono.total_pendiente_usd + EPS) {
       setMensaje(
         `Ese monto equivale a USD ${usd.toFixed(2)}, pero la deuda total es de solo USD ${clienteAbono.total_pendiente_usd.toFixed(2)}.`
@@ -381,7 +383,13 @@ function CuentasPorCobrar({ config, esAdmin }: { config: ConfigRow; esAdmin: boo
             cuánto paga el cliente hoy y a qué tasa — el pago se aplica primero a la venta más antigua.
           </p>
           <div className="form-row">
-            <input placeholder="Monto Bs" type="number" step="0.01" value={montoBs} onChange={(e) => setMontoBs(e.target.value)} />
+            <input
+              placeholder={monedaDeMetodo(metodo) === "USD" ? "Monto $" : "Monto Bs"}
+              type="number"
+              step="0.01"
+              value={montoBs}
+              onChange={(e) => setMontoBs(e.target.value)}
+            />
             <input placeholder="Tasa del día" type="number" step="0.01" value={tasaPago} onChange={(e) => setTasaPago(e.target.value)} />
             <select value={metodo} onChange={(e) => setMetodo(e.target.value)}>
               <option value="PUNTO_VENTA">Punto de venta</option>
@@ -476,10 +484,10 @@ function CuentasPorPagar({ config }: { config: ConfigRow }) {
 
   async function confirmarAbono() {
     if (!facturaAbono) return;
-    const bs = Number(montoBs);
+    const montoEscrito = Number(montoBs);
     const tasa = Number(tasaPago);
     const saldoUsd = facturaAbono.monto_total_usd - facturaAbono.monto_pagado_usd;
-    if (!bs || bs <= 0) {
+    if (!montoEscrito || montoEscrito <= 0) {
       setMensaje("El monto debe ser mayor a 0.");
       return;
     }
@@ -487,7 +495,8 @@ function CuentasPorPagar({ config }: { config: ConfigRow }) {
       setMensaje("La tasa del día debe ser mayor a 0.");
       return;
     }
-    const usd = bs / tasa;
+    const monedaMetodo = monedaDeMetodo(metodo);
+    const usd = monedaMetodo === "USD" ? montoEscrito : montoEscrito / tasa;
     if (usd > saldoUsd + EPS) {
       setMensaje(`Ese monto equivale a USD ${usd.toFixed(2)}, pero el saldo es de solo USD ${saldoUsd.toFixed(2)}.`);
       return;
@@ -501,7 +510,7 @@ function CuentasPorPagar({ config }: { config: ConfigRow }) {
           factura_compra_id: facturaAbono.id,
           monto_usd: usd,
           tasa_cambio_dia: tasa,
-          monto_bs: bs,
+          monto_bs: usd * tasa,
           metodo,
           referencia: referencia.trim() || null,
         },
@@ -677,7 +686,13 @@ function CuentasPorPagar({ config }: { config: ConfigRow }) {
             Ingresa cuánto pagas hoy y a qué tasa.
           </p>
           <div className="form-row">
-            <input placeholder="Monto Bs" type="number" step="0.01" value={montoBs} onChange={(e) => setMontoBs(e.target.value)} />
+            <input
+              placeholder={monedaDeMetodo(metodo) === "USD" ? "Monto $" : "Monto Bs"}
+              type="number"
+              step="0.01"
+              value={montoBs}
+              onChange={(e) => setMontoBs(e.target.value)}
+            />
             <input placeholder="Tasa del día" type="number" step="0.01" value={tasaPago} onChange={(e) => setTasaPago(e.target.value)} />
             <select value={metodo} onChange={(e) => setMetodo(e.target.value)}>
               <option value="PUNTO_VENTA">Punto de venta</option>

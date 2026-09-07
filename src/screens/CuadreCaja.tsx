@@ -1,25 +1,42 @@
 import { useEffect, useState } from "react";
 import { getDb } from "../db";
 import { fechaHoraVenezuela } from "../fecha";
+import { monedaDeMetodo, montoBsDesdeEntrada, montoNativoDesdeBs } from "../precios";
+import { ConfigRow } from "../types";
 
 const METODOS_BASE = ["PUNTO_VENTA", "BIOPAGO", "PAGO_MOVIL", "EFECTIVO", "DIVISAS", "TRANSFERENCIA"];
 
-type Fila = { metodo: string; esperado: number; contado: string };
+// "esperado" siempre viene en Bs (así se guarda en la base, sin importar la
+// moneda del método — ver montoBsDesdeEntrada en precios.ts, que ya
+// convierte al guardar un pago). "contado" en cambio es lo que el usuario
+// ESCRIBE, en la moneda NATIVA del método (dólares para DIVISAS, bolívares
+// para el resto) — así se puede contar billetes físicos sin tener que
+// sacar cuentas con la tasa del día.
+type Fila = { metodo: string; moneda: string; esperado: number; contado: string };
 
 function hoyISO() {
   return fechaHoraVenezuela().slice(0, 10);
 }
 
-function armarFilas(esperados: Record<string, number>, contadosGuardados: Record<string, number>): Fila[] {
+function armarFilas(
+  esperados: Record<string, number>,
+  contadosGuardadosBs: Record<string, number>,
+  tasaCambioDia: number
+): Fila[] {
   const metodos = new Set([...METODOS_BASE, ...Object.keys(esperados)]);
-  return Array.from(metodos).map((m) => ({
-    metodo: m,
-    esperado: esperados[m] ?? 0,
-    contado: contadosGuardados[m] != null ? String(contadosGuardados[m]) : "",
-  }));
+  return Array.from(metodos).map((m) => {
+    const moneda = monedaDeMetodo(m);
+    const contadoBsGuardado = contadosGuardadosBs[m];
+    return {
+      metodo: m,
+      moneda,
+      esperado: esperados[m] ?? 0,
+      contado: contadoBsGuardado != null ? String(montoNativoDesdeBs(moneda, contadoBsGuardado, tasaCambioDia)) : "",
+    };
+  });
 }
 
-export default function CuadreCaja() {
+export default function CuadreCaja({ config }: { config: ConfigRow }) {
   const [fecha, setFecha] = useState(hoyISO());
   const [ingresos, setIngresos] = useState<Fila[]>([]);
   // Puramente informativo — de dónde sale el número de EFECTIVO en
@@ -31,6 +48,7 @@ export default function CuadreCaja() {
   const [guardando, setGuardando] = useState(false);
   const [guardado, setGuardado] = useState(false);
   const [mensaje, setMensaje] = useState<string | null>(null);
+  const tasa = config.tasa_cambio_dia;
 
   async function cargar() {
     setMensaje(null);
@@ -103,10 +121,10 @@ export default function CuadreCaja() {
       `SELECT tipo, metodo, monto_contado_bs FROM cierres_caja WHERE fecha = $1 AND tipo = 'INGRESO'`,
       [fecha]
     );
-    const contadosIngreso: Record<string, number> = {};
-    for (const g of guardados) contadosIngreso[g.metodo] = g.monto_contado_bs;
+    const contadosIngresoBs: Record<string, number> = {};
+    for (const g of guardados) contadosIngresoBs[g.metodo] = g.monto_contado_bs;
 
-    setIngresos(armarFilas(esperadosIngreso, contadosIngreso));
+    setIngresos(armarFilas(esperadosIngreso, contadosIngresoBs, tasa));
   }
 
   useEffect(() => {
@@ -132,8 +150,12 @@ export default function CuadreCaja() {
       // y el ROLLBACK del catch fallaba también, sin llegar nunca a
       // setGuardando(false)).
       for (const f of ingresos) {
-        const contado = Number(f.contado || "0");
-        const diferencia = contado - f.esperado;
+        // Lo escrito está en la moneda nativa del método — se convierte a
+        // Bs para guardar (cierres_caja siempre guarda en Bs) y para
+        // calcular la diferencia contra "esperado" (que también está en
+        // Bs).
+        const contadoBs = montoBsDesdeEntrada(f.moneda, Number(f.contado || "0"), tasa);
+        const diferencia = contadoBs - f.esperado;
         await db.execute(
           `INSERT INTO cierres_caja (id, fecha, tipo, metodo, monto_esperado_bs, monto_contado_bs, diferencia_bs)
            VALUES ($1,$2,'INGRESO',$3,$4,$5,$6)
@@ -141,7 +163,7 @@ export default function CuadreCaja() {
              monto_esperado_bs = excluded.monto_esperado_bs,
              monto_contado_bs = excluded.monto_contado_bs,
              diferencia_bs = excluded.diferencia_bs`,
-          [crypto.randomUUID(), fecha, f.metodo, f.esperado, contado, diferencia]
+          [crypto.randomUUID(), fecha, f.metodo, f.esperado, contadoBs, diferencia]
         );
       }
     } catch (e) {
@@ -153,8 +175,22 @@ export default function CuadreCaja() {
     setGuardado(true);
   }
 
-  const totalIngresoEsperado = ingresos.reduce((a, f) => a + f.esperado, 0);
-  const totalIngresoContado = ingresos.reduce((a, f) => a + Number(f.contado || "0"), 0);
+  // Bs y USD se calculan aparte (no tiene sentido sumar "5000" de pago
+  // móvil con "10" de divisas como si fueran la misma moneda — ese era
+  // justo el bug reportado). "en bolívares" es el total de verdad, todo
+  // convertido a una sola moneda con la tasa del día.
+  const filasBs = ingresos.filter((f) => f.moneda !== "USD");
+  const filasUsd = ingresos.filter((f) => f.moneda === "USD");
+  const totalEsperadoBs = filasBs.reduce((a, f) => a + f.esperado, 0);
+  const totalEsperadoUsdNativo = filasUsd.reduce((a, f) => a + montoNativoDesdeBs("USD", f.esperado, tasa), 0);
+  const totalEsperadoBolivares = ingresos.reduce((a, f) => a + f.esperado, 0);
+
+  const totalContadoBsNativo = filasBs.reduce((a, f) => a + Number(f.contado || "0"), 0);
+  const totalContadoUsdNativo = filasUsd.reduce((a, f) => a + Number(f.contado || "0"), 0);
+  const totalContadoBolivares = ingresos.reduce(
+    (a, f) => a + montoBsDesdeEntrada(f.moneda, Number(f.contado || "0"), tasa),
+    0
+  );
 
   function tablaFilas(filas: Fila[]) {
     return (
@@ -162,19 +198,23 @@ export default function CuadreCaja() {
         <thead>
           <tr>
             <th>Método</th>
-            <th>Esperado Bs</th>
-            <th>Contado Bs</th>
+            <th>Esperado</th>
+            <th>Contado</th>
             <th>Diferencia</th>
           </tr>
         </thead>
         <tbody>
           {filas.map((f) => {
+            const simbolo = f.moneda === "USD" ? "$" : "Bs";
+            const esperadoNativo = montoNativoDesdeBs(f.moneda, f.esperado, tasa);
             const contadoNum = Number(f.contado || "0");
-            const diff = f.contado === "" ? null : contadoNum - f.esperado;
+            const diff = f.contado === "" ? null : contadoNum - esperadoNativo;
             return (
               <tr key={f.metodo}>
                 <td>{f.metodo.split("_").join(" ")}</td>
-                <td>{f.esperado.toFixed(2)}</td>
+                <td>
+                  {simbolo} {esperadoNativo.toFixed(2)}
+                </td>
                 <td>
                   <input
                     className="cant-input"
@@ -183,11 +223,11 @@ export default function CuadreCaja() {
                     step="0.01"
                     value={f.contado}
                     onChange={(e) => actualizarContado(f.metodo, e.target.value)}
-                    placeholder="0.00"
+                    placeholder={`0.00 ${simbolo}`}
                   />
                 </td>
                 <td className={diff && Math.abs(diff) > 0.01 ? "restante-pendiente" : ""}>
-                  {diff === null ? "—" : diff.toFixed(2)}
+                  {diff === null ? "—" : `${simbolo} ${diff.toFixed(2)}`}
                 </td>
               </tr>
             );
@@ -228,9 +268,21 @@ export default function CuadreCaja() {
           </p>
         )}
         {tablaFilas(ingresos)}
-        <div className="totales">
-          <span>Esperado: Bs {totalIngresoEsperado.toFixed(2)}</span>
-          <strong>Contado: Bs {totalIngresoContado.toFixed(2)}</strong>
+        <div className="totales" style={{ flexDirection: "column", alignItems: "stretch", gap: 4 }}>
+          <div className="form-row" style={{ justifyContent: "space-between" }}>
+            <span>Total esperado en Bs: Bs {totalEsperadoBs.toFixed(2)}</span>
+            <span>Total contado en Bs: Bs {totalContadoBsNativo.toFixed(2)}</span>
+          </div>
+          {filasUsd.length > 0 && (
+            <div className="form-row" style={{ justifyContent: "space-between" }}>
+              <span>Total esperado en $: $ {totalEsperadoUsdNativo.toFixed(2)}</span>
+              <span>Total contado en $: $ {totalContadoUsdNativo.toFixed(2)}</span>
+            </div>
+          )}
+          <div className="form-row" style={{ justifyContent: "space-between" }}>
+            <strong>Total estimado en bolívares: Bs {totalEsperadoBolivares.toFixed(2)}</strong>
+            <strong>Total contado en bolívares: Bs {totalContadoBolivares.toFixed(2)}</strong>
+          </div>
         </div>
       </div>
 

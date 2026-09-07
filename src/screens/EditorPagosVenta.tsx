@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { FacturaVentaPagoDetalle, METODOS_PAGO } from "../types";
+import { monedaDeMetodo, montoBsDesdeEntrada, montoNativoDesdeBs } from "../precios";
 
 type LineaPagoEditable = {
   key: string;
@@ -18,14 +19,21 @@ const EPS = 0.01;
 // mismo monto entre métodos (ver editar_venta_pagos en
 // src-tauri/src/comandos.rs, que rechaza el guardado si la suma no
 // coincide). La fila de crédito pendiente (si la hay) no pasa por acá.
+//
+// Cada línea sigue guardándose en monto_bs (la fuente de verdad) — pero si
+// el método de esa línea es DIVISAS, el admin ve y escribe el monto en
+// dólares (más natural para corregir un pago en divisas), y se convierte
+// solo con tasaCambioDia al guardar/mostrar.
 export default function EditorPagosVenta({
   ventaId,
   pagosIniciales,
+  tasaCambioDia,
   onGuardado,
   onCancelar,
 }: {
   ventaId: string;
   pagosIniciales: FacturaVentaPagoDetalle[];
+  tasaCambioDia: number;
   onGuardado: () => void;
   onCancelar: () => void;
 }) {
@@ -54,6 +62,15 @@ export default function EditorPagosVenta({
 
   function cambiarLinea(key: string, cambios: Partial<LineaPagoEditable>) {
     setLineas((prev) => prev.map((l) => (l.key === key ? { ...l, ...cambios } : l)));
+  }
+
+  // Cuando cambia el método de una línea, el monto (guardado en Bs) se
+  // mantiene igual — solo cambia en qué moneda se MUESTRA. No hay que
+  // recalcular nada acá, montoNativoDesdeBs ya lo hace al renderizar.
+  function cambiarMontoEditado(key: string, moneda: string, valorEscrito: string) {
+    const num = Number(valorEscrito);
+    if (Number.isNaN(num)) return;
+    cambiarLinea(key, { monto_bs: montoBsDesdeEntrada(moneda, num, tasaCambioDia) });
   }
 
   const sumaNueva = lineas.reduce((a, l) => a + (Number(l.monto_bs) || 0), 0);
@@ -106,48 +123,57 @@ export default function EditorPagosVenta({
         <thead>
           <tr>
             <th>Método</th>
-            <th>Monto Bs</th>
+            <th>Monto</th>
             <th>Referencia</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
-          {lineas.map((l) => (
-            <tr key={l.key}>
-              <td>
-                <select value={l.metodo} onChange={(e) => cambiarLinea(l.key, { metodo: e.target.value })}>
-                  {METODOS_PAGO.map((m) => (
-                    <option key={m} value={m}>
-                      {m.split("_").join(" ")}
-                    </option>
-                  ))}
-                </select>
-              </td>
-              <td>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={l.monto_bs}
-                  onChange={(e) => cambiarLinea(l.key, { monto_bs: Number(e.target.value) })}
-                  style={{ width: 100 }}
-                />
-              </td>
-              <td>
-                <input
-                  placeholder="Opcional"
-                  value={l.referencia}
-                  onChange={(e) => cambiarLinea(l.key, { referencia: e.target.value })}
-                  style={{ maxWidth: 160 }}
-                />
-              </td>
-              <td>
-                <button className="link-btn link-btn-danger" onClick={() => quitarLinea(l.key)}>
-                  quitar
-                </button>
-              </td>
-            </tr>
-          ))}
+          {lineas.map((l) => {
+            const moneda = monedaDeMetodo(l.metodo);
+            const valorMostrado = montoNativoDesdeBs(moneda, l.monto_bs, tasaCambioDia);
+            return (
+              <tr key={l.key}>
+                <td>
+                  <select value={l.metodo} onChange={(e) => cambiarLinea(l.key, { metodo: e.target.value })}>
+                    {METODOS_PAGO.map((m) => (
+                      <option key={m} value={m}>
+                        {m.split("_").join(" ")}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+                <td>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <span className="hint" style={{ margin: 0 }}>
+                      {moneda === "USD" ? "$" : "Bs"}
+                    </span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={valorMostrado}
+                      onChange={(e) => cambiarMontoEditado(l.key, moneda, e.target.value)}
+                      style={{ width: 90 }}
+                    />
+                  </div>
+                </td>
+                <td>
+                  <input
+                    placeholder="Opcional"
+                    value={l.referencia}
+                    onChange={(e) => cambiarLinea(l.key, { referencia: e.target.value })}
+                    style={{ maxWidth: 160 }}
+                  />
+                </td>
+                <td>
+                  <button className="link-btn link-btn-danger" onClick={() => quitarLinea(l.key)}>
+                    quitar
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
           {lineas.length === 0 && (
             <tr>
               <td colSpan={4} className="empty">

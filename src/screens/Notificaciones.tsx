@@ -33,7 +33,7 @@ export default function Notificaciones({ items }: { items: NotificacionItem[] })
   return (
     <div ref={ref} style={{ position: "relative" }}>
       <button type="button" className="link-btn" onClick={() => setAbierto((a) => !a)}>
-        🔔 {items.length}
+        🔔 Notificaciones ({items.length})
       </button>
       {abierto && (
         <div

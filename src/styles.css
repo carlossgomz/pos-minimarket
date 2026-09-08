@@ -111,12 +111,16 @@ body {
   font-size: 12px;
 }
 
+/* Sin flex-wrap acá a propósito: el botón de cerrar sesión (último hijo
+   directo) debe quedar siempre anclado arriba a la derecha, en la misma
+   línea que el logo. Es ".tasa" quien absorbe el ancho angosto envolviendo
+   SUS propios controles (vendedor, tasa, usuario...) en una segunda línea
+   interna, sin arrastrar a cerrar sesión con ella. */
 .header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  flex-wrap: wrap;
-  row-gap: 8px;
+  gap: 12px;
   margin-bottom: 20px;
 }
 
@@ -139,6 +143,21 @@ body {
   gap: 8px;
   row-gap: 6px;
   font-size: 13px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.header-acciones {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.boton-cerrar-sesion {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .tasa input {

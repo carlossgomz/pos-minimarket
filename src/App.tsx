@@ -525,7 +525,6 @@ export default function App() {
               {estadoConexion.pendientes > 0 ? ` (${estadoConexion.pendientes} pendiente${estadoConexion.pendientes === 1 ? "" : "s"})` : ""}
             </span>
           )}
-          <Notificaciones items={notificaciones} />
           {pedidosDeliveryPendientes > 0 && (
             <button
               type="button"
@@ -552,8 +551,11 @@ export default function App() {
           >
             {tema === "oscuro" ? "☀ Claro" : "🌙 Oscuro"}
           </button>
+        </div>
+        <div className="header-acciones">
+          <Notificaciones items={notificaciones} />
           <button
-            className="link-btn"
+            className="link-btn boton-cerrar-sesion"
             onClick={() => {
               setUsuarioActual(null);
               setTab("venta");

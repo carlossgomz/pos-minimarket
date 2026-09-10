@@ -39,5 +39,12 @@ chrono = "0.4"
 opt-level = 3
 lto = true
 codegen-units = 1
-panic = "abort"
+# panic = "abort" quitado a propósito: con "abort", CUALQUIER panic (hasta
+# uno chico, ej. un .unwrap() sobre None en un solo comando) tira abajo el
+# proceso ENTERO sin aviso - con el default ("unwind"), Tauri atrapa el
+# panic de un comando individual y solo esa llamada falla, en vez de
+# cerrarse toda la app de golpe. Confirmado con el Visor de eventos de
+# Windows: crashes reales (0xc0000005/0xc0000409) repetidos en el mismo
+# punto del binario en varias versiones - el síntoma reportado ("se cierra
+# solo, de la nada") coincide con esto.
 strip = true

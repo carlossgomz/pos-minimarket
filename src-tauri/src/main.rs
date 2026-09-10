@@ -12,7 +12,7 @@ fn main() {
     // que preocuparse por esto.
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
-        .thread_stack_size(64 * 1024 * 1024)
+        .thread_stack_size(128 * 1024 * 1024)
         .build()
         .expect("no se pudo crear el runtime de tokio");
 

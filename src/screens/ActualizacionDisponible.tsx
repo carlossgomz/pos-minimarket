@@ -36,7 +36,7 @@ export default function ActualizacionDisponible({
             Saltar versión
           </button>
           <button type="button" onClick={onActualizar} disabled={instalando}>
-            {instalando ? "Instalando…" : "Actualizar ahora"}
+            {instalando ? "Instalando…" : error ? "Reintentar" : "Actualizar ahora"}
           </button>
         </div>
       </div>

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { check, Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { getVersion } from "@tauri-apps/api/app";
 import { open } from "@tauri-apps/plugin-shell";
 import { getDb } from "./db";
 import { ConfigRow, Usuario, Vendedor } from "./types";
@@ -113,24 +114,48 @@ export default function App() {
     setActualizacionSaltada(actualizacion.version);
   }
 
-  // "Qué hay de nuevo": justo antes de reiniciar para instalar (ver
-  // instalarActualizacion) se guarda acá la versión + notas del release —
-  // como el reinicio arranca un proceso nuevo, es la única forma de que
-  // el próximo arranque (ya en la versión nueva) sepa que tiene que
-  // mostrar la ventanita, y con qué contenido.
-  const NOVEDADES_KEY = "pos-novedades-pendientes";
+  // "Qué hay de nuevo": antes se guardaba un aviso en localStorage justo
+  // antes de reiniciar para instalar, y solo se mostraba si ESE reinicio
+  // en particular salía bien — si el admin instalaba el .exe a mano (sin
+  // pasar por el botón de acá adentro), o si el proceso se cerraba de
+  // una forma que no dejaba terminar ese paso, la ventanita simplemente
+  // no aparecía nunca para esa versión. Ahora en cambio compara la
+  // versión que está corriendo AHORA contra la última que ya se mostró
+  // (guardada en localStorage) - no importa cómo se instaló la
+  // actualización, si difieren busca las notas de esa versión en GitHub
+  // y las muestra. Se revisa una vez al entrar y de nuevo cada 30
+  // minutos (igual que el chequeo de actualizaciones de arriba), así una
+  // instalación que quedó abierta mucho tiempo también se entera.
+  const NOVEDADES_VISTAS_KEY = "pos-novedades-version-vista";
   const [novedades, setNovedades] = useState<{ version: string; body: string } | null>(null);
   useEffect(() => {
-    const guardado = localStorage.getItem(NOVEDADES_KEY);
-    if (!guardado) return;
-    localStorage.removeItem(NOVEDADES_KEY);
-    try {
-      setNovedades(JSON.parse(guardado));
-    } catch {
-      // dato guardado corrupto (no debería pasar) — simplemente no se
-      // muestra la ventanita, no vale la pena romper el arranque por esto
+    if (!configSyncLista) return;
+    let cancelado = false;
+    async function revisarNovedades() {
+      try {
+        const versionActual = await getVersion();
+        if (localStorage.getItem(NOVEDADES_VISTAS_KEY) === versionActual) return;
+        const resp = await fetch(`https://api.github.com/repos/carlossgomz/pos-minimarket/releases/tags/v${versionActual}`);
+        if (!resp.ok) return; // sin red, o el release de esta versión no está publicado (todavía) con ese tag
+        const data = await resp.json();
+        if (!cancelado) {
+          setNovedades({ version: versionActual, body: data.body ?? "" });
+        }
+      } catch {
+        // sin red - se reintenta solo en el próximo ciclo de 30 minutos
+      }
     }
-  }, []);
+    revisarNovedades();
+    const id = setInterval(revisarNovedades, 30 * 60 * 1000);
+    return () => {
+      cancelado = true;
+      clearInterval(id);
+    };
+  }, [configSyncLista]);
+  function cerrarNovedades() {
+    if (novedades) localStorage.setItem(NOVEDADES_VISTAS_KEY, novedades.version);
+    setNovedades(null);
+  }
 
   async function cargarConfig() {
     try {
@@ -327,28 +352,26 @@ export default function App() {
     return () => clearInterval(id);
   }, [configSyncLista]);
 
-  async function instalarActualizacion() {
+  // El instalador baja el archivo entero (~290MB) de una sola pasada, sin
+  // reanudar - un corte breve de la conexión en cualquier punto de esos
+  // varios minutos alcanza para que falle con un error de "no se pudo
+  // decodificar la respuesta". La mayoría de esos cortes son momentáneos,
+  // así que antes de rendirse y pedirle al usuario que reintente a mano,
+  // se reintenta solo unas pocas veces con una pausa corta entre cada una.
+  const MAX_INTENTOS_INSTALAR = 3;
+  async function instalarActualizacion(intento = 1) {
     if (!actualizacion) return;
     setInstalando(true);
     setErrorActualizacion(null);
     try {
-      // Se guarda ANTES de instalar, no después — en Windows
-      // downloadAndInstall() puede cerrar el proceso actual como parte de
-      // instalar (el .exe necesita quedar libre para que el instalador lo
-      // reemplace), así que el código de después de esa llamada no
-      // siempre llega a correr.
-      localStorage.setItem(
-        NOVEDADES_KEY,
-        JSON.stringify({ version: actualizacion.version, body: actualizacion.body ?? "" })
-      );
       await actualizacion.downloadAndInstall();
       await relaunch();
     } catch (e) {
-      // Si falló acá, no se instaló nada — hay que borrar el aviso que se
-      // guardó antes, si no la próxima vez que abra (sin haber
-      // actualizado de verdad) igual le aparecería la ventanita.
-      localStorage.removeItem(NOVEDADES_KEY);
-      setErrorActualizacion(`No se pudo instalar la actualización: ${String(e)}`);
+      if (intento < MAX_INTENTOS_INSTALAR) {
+        setTimeout(() => instalarActualizacion(intento + 1), 5_000);
+        return;
+      }
+      setErrorActualizacion(`No se pudo instalar la actualización después de ${MAX_INTENTOS_INSTALAR} intentos: ${String(e)}`);
       setInstalando(false);
     }
   }
@@ -396,7 +419,7 @@ export default function App() {
     return (
       <>
         <Login config={config} onLogin={setUsuarioActual} />
-        {novedades && <Novedades novedades={novedades} onCerrar={() => setNovedades(null)} />}
+        {novedades && <Novedades novedades={novedades} onCerrar={cerrarNovedades} />}
         {actualizacion && actualizacion.version !== actualizacionSaltada && (
           <ActualizacionDisponible
             version={actualizacion.version}

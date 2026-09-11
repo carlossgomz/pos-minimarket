@@ -114,6 +114,9 @@ export default function App() {
   const [actualizacion, setActualizacion] = useState<Update | null>(null);
   const [instalando, setInstalando] = useState(false);
   const [errorActualizacion, setErrorActualizacion] = useState<string | null>(null);
+  // Porcentaje de la descarga en curso (0-100) o null si todavía no se
+  // sabe el tamaño total — ver instalarActualizacion.
+  const [progresoDescarga, setProgresoDescarga] = useState<number | null>(null);
 
   // Versión que el usuario eligió saltar en la ventana de "actualización
   // disponible" — se guarda para no volver a interrumpirlo con la misma
@@ -403,20 +406,59 @@ export default function App() {
   // así que antes de rendirse y pedirle al usuario que reintente a mano,
   // se reintenta solo unas pocas veces con una pausa corta entre cada una.
   const MAX_INTENTOS_INSTALAR = 3;
+  // Si la conexión se corta a medias, downloadAndInstall() puede quedarse
+  // colgado sin nunca resolver ni rechazar (el navegador sigue "esperando
+  // datos" indefinidamente) - antes eso dejaba "Instalando…" en pantalla
+  // sin ningún aviso de que algo estaba mal. Si pasan 45s sin que llegue
+  // NINGÚN byte nuevo, se da por colgada y se corta la espera para poder
+  // reintentar, en vez de esperar para siempre.
+  const SIN_AVANCE_LIMITE_MS = 45_000;
   async function instalarActualizacion(intento = 1) {
     if (!actualizacion) return;
     setInstalando(true);
     setErrorActualizacion(null);
+    setProgresoDescarga(0);
+
+    let totalBytes = 0;
+    let descargados = 0;
+    let ultimoAvance = Date.now();
+    let vigilante = 0;
+
+    const promesaColgada = new Promise<never>((_, reject) => {
+      vigilante = window.setInterval(() => {
+        if (Date.now() - ultimoAvance > SIN_AVANCE_LIMITE_MS) {
+          reject(new Error("La descarga se quedó sin avanzar por más de 45 segundos — probablemente se cortó la conexión."));
+        }
+      }, 2_000);
+    });
+
     try {
-      await actualizacion.downloadAndInstall();
+      await Promise.race([
+        actualizacion.downloadAndInstall((evento) => {
+          if (evento.event === "Started") {
+            totalBytes = evento.data.contentLength ?? 0;
+            ultimoAvance = Date.now();
+          } else if (evento.event === "Progress") {
+            descargados += evento.data.chunkLength;
+            ultimoAvance = Date.now();
+            setProgresoDescarga(totalBytes > 0 ? Math.min(99, Math.round((descargados / totalBytes) * 100)) : null);
+          } else if (evento.event === "Finished") {
+            setProgresoDescarga(100);
+          }
+        }),
+        promesaColgada,
+      ]);
+      window.clearInterval(vigilante);
       await relaunch();
     } catch (e) {
+      window.clearInterval(vigilante);
       if (intento < MAX_INTENTOS_INSTALAR) {
         setTimeout(() => instalarActualizacion(intento + 1), 5_000);
         return;
       }
       setErrorActualizacion(`No se pudo instalar la actualización después de ${MAX_INTENTOS_INSTALAR} intentos: ${String(e)}`);
       setInstalando(false);
+      setProgresoDescarga(null);
     }
   }
 
@@ -469,6 +511,7 @@ export default function App() {
             version={actualizacion.version}
             notas={actualizacion.body ?? ""}
             instalando={instalando}
+            progreso={progresoDescarga}
             error={errorActualizacion}
             onActualizar={instalarActualizacion}
             onSaltar={saltarActualizacion}
@@ -552,7 +595,9 @@ export default function App() {
   if (actualizacion) {
     notificaciones.push({
       key: "actualizacion",
-      texto: instalando ? "Instalando…" : `⬆ Actualización disponible: v${actualizacion.version}`,
+      texto: instalando
+        ? `Instalando… ${progresoDescarga !== null ? `${progresoDescarga}%` : ""}`
+        : `⬆ Actualización disponible: v${actualizacion.version}`,
       disabled: instalando,
       error: errorActualizacion,
       onClick: instalarActualizacion,
@@ -721,6 +766,7 @@ export default function App() {
           version={actualizacion.version}
           notas={actualizacion.body ?? ""}
           instalando={instalando}
+          progreso={progresoDescarga}
           error={errorActualizacion}
           onActualizar={instalarActualizacion}
           onSaltar={saltarActualizacion}

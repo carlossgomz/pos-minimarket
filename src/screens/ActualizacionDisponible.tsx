@@ -8,6 +8,7 @@ export default function ActualizacionDisponible({
   version,
   notas,
   instalando,
+  progreso,
   error,
   onActualizar,
   onSaltar,
@@ -15,6 +16,9 @@ export default function ActualizacionDisponible({
   version: string;
   notas: string;
   instalando: boolean;
+  // Porcentaje de la descarga (0-100), o null si todavía no se sabe el
+  // tamaño total del archivo — ver instalarActualizacion en App.tsx.
+  progreso: number | null;
   error: string | null;
   onActualizar: () => void;
   onSaltar: () => void;
@@ -29,6 +33,23 @@ export default function ActualizacionDisponible({
           <p style={{ whiteSpace: "pre-wrap" }}>{notasLimpias}</p>
         ) : (
           <p className="hint">Sin detalle de los cambios de esta versión.</p>
+        )}
+        {instalando && (
+          <div style={{ margin: "10px 0" }}>
+            <div style={{ background: "var(--bg-input)", borderRadius: 6, overflow: "hidden", height: 10 }}>
+              <div
+                style={{
+                  width: `${progreso ?? 0}%`,
+                  background: "var(--accent, #3b82f6)",
+                  height: "100%",
+                  transition: "width 0.3s",
+                }}
+              />
+            </div>
+            <p className="hint" style={{ margin: "4px 0 0" }}>
+              {progreso !== null ? `Descargando… ${progreso}%` : "Descargando…"}
+            </p>
+          </div>
         )}
         {error && <p style={{ color: "var(--danger-text)" }}>{error}</p>}
         <div className="form-row" style={{ justifyContent: "flex-end", marginTop: 12 }}>

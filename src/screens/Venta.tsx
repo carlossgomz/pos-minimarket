@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getDb } from "../db";
 import { formatearStock, monedaDeMetodo, montoBsDesdeEntrada, precioVentaBsHoy, precioVentaUsd } from "../precios";
 import { fechaHoraVenezuela } from "../fecha";
@@ -233,6 +234,35 @@ export default function Venta({
   // error de conexión y no duplicar los movimientos. Se limpia solo
   // cuando el guardado termina bien.
   const idConsumoRef = useRef<string | null>(null);
+
+  // Si el cajero intenta cerrar la ventana con tickets o consumo interno
+  // sin guardar, se le avisa antes de perderlos — antes se podía cerrar
+  // sin querer (o con Alt+F4) y perder todo el trabajo del turno sin
+  // ningún aviso. Los refs se usan para que el listener quede registrado
+  // una sola vez (no en cada tecla) pero siga viendo el estado más
+  // reciente al momento de cerrar.
+  const ticketsRef = useRef(tickets);
+  ticketsRef.current = tickets;
+  const consumoInternoRef = useRef(consumoInterno);
+  consumoInternoRef.current = consumoInterno;
+
+  useEffect(() => {
+    const unlistenPromise = getCurrentWindow().onCloseRequested(async (event) => {
+      const hayTrabajoSinGuardar =
+        ticketsRef.current.some((t) => t.carrito.length > 0) || consumoInternoRef.current.length > 0;
+      if (!hayTrabajoSinGuardar) return;
+      event.preventDefault();
+      const cerrar = confirm(
+        "Hay tickets abiertos o consumo interno sin guardar — se van a perder si cerrás ahora. ¿Cerrar de todas formas?"
+      );
+      if (cerrar) {
+        await getCurrentWindow().destroy();
+      }
+    });
+    return () => {
+      unlistenPromise.then((unlisten) => unlisten());
+    };
+  }, []);
 
   // --- Avances de efectivo del día (el cliente pide efectivo, se le cobra
   // un monto mayor por otro método — la diferencia es la comisión). Cada

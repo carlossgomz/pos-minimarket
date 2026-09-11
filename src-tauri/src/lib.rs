@@ -5,7 +5,7 @@ mod fecha;
 mod ia;
 mod offline;
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 // Punto de entrada de la app. La base de datos ya NO es un archivo local —
 // es Turso (libSQL) en modo remoto, compartida por todos los dispositivos
@@ -21,6 +21,20 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Tiene que ser el PRIMER plugin registrado (lo exige la propia
+        // librería) - si alguien abre un segundo Kaxa mientras el primero
+        // ya está corriendo, este callback se dispara en el proceso
+        // ORIGINAL (el segundo proceso se cierra solo, sin abrir ventana
+        // ni tocar la base de datos), trae al frente la ventana que ya
+        // estaba abierta y le avisa al frontend para que muestre el aviso.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(ventana) = app.get_webview_window("main") {
+                let _ = ventana.unminimize();
+                let _ = ventana.show();
+                let _ = ventana.set_focus();
+            }
+            let _ = app.emit("instancia-duplicada", ());
+        }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())

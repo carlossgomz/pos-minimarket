@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-resolver-stock-pendiente"
+description = "Enables the resolver_stock_pendiente command without any pre-configured scope."
+commands.allow = ["resolver_stock_pendiente"]
+
+[[permission]]
+identifier = "deny-resolver-stock-pendiente"
+description = "Denies the resolver_stock_pendiente command without any pre-configured scope."
+commands.deny = ["resolver_stock_pendiente"]

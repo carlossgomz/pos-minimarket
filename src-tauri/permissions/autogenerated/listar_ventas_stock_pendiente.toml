@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-listar-ventas-stock-pendiente"
+description = "Enables the listar_ventas_stock_pendiente command without any pre-configured scope."
+commands.allow = ["listar_ventas_stock_pendiente"]
+
+[[permission]]
+identifier = "deny-listar-ventas-stock-pendiente"
+description = "Denies the listar_ventas_stock_pendiente command without any pre-configured scope."
+commands.deny = ["listar_ventas_stock_pendiente"]

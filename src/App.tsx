@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { check, Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { getVersion } from "@tauri-apps/api/app";
@@ -64,6 +65,19 @@ export default function App() {
     document.documentElement.dataset.theme = tema;
     localStorage.setItem(TEMA_KEY, tema);
   }, [tema]);
+
+  // Si alguien abre Kaxa mientras ya está corriendo en este equipo, el
+  // plugin de instancia única (ver lib.rs) cierra ese segundo proceso solo
+  // y trae al frente la ventana que ya estaba abierta — esto solo avisa
+  // por qué no se abrió nada nuevo.
+  useEffect(() => {
+    const unlistenPromise = listen("instancia-duplicada", () => {
+      alert("Kaxa ya está abierto en este equipo — revisá la ventana que ya está abierta.");
+    });
+    return () => {
+      unlistenPromise.then((unlisten) => unlisten());
+    };
+  }, []);
 
   const [config, setConfig] = useState<ConfigRow | null>(null);
   const [cargando, setCargando] = useState(true);

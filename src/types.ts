@@ -72,6 +72,21 @@ export type Usuario = {
   activo: number; // 0/1
 };
 
+// Venta cobrada con más cantidad de un producto de la que había en stock -
+// ver comandos::listar_ventas_stock_pendiente. El cajero ve solo las
+// suyas y puede dejar su nota; solo un admin la puede cerrar.
+export type VentaItemStockPendiente = {
+  id: string;
+  venta_id: string;
+  numero_ticket: string;
+  fecha_hora: string;
+  vendedor_nombre: string | null;
+  producto_nombre: string;
+  cantidad_vendida: number;
+  stock_disponible_al_vender: number | null;
+  nota_cajero: string | null;
+};
+
 export type LineaCarrito = {
   producto_id: string;
   codigo_barra: string;

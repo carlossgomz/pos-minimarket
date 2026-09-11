@@ -5,7 +5,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { getVersion } from "@tauri-apps/api/app";
 import { open } from "@tauri-apps/plugin-shell";
 import { getDb } from "./db";
-import { ConfigRow, Usuario, Vendedor } from "./types";
+import { ConfigRow, Usuario, Vendedor, VentaItemStockPendiente } from "./types";
 import ConfiguracionSync from "./screens/ConfiguracionSync";
 import Venta from "./screens/Venta";
 import Inventario from "./screens/Inventario";
@@ -24,6 +24,7 @@ import Novedades from "./screens/Novedades";
 import ActualizacionDisponible from "./screens/ActualizacionDisponible";
 import Notificaciones, { NotificacionItem } from "./screens/Notificaciones";
 import PendientesCodigoBarras from "./screens/PendientesCodigoBarras";
+import StockPendiente from "./screens/StockPendiente";
 import logo from "./assets/logo.png";
 
 type Tab =
@@ -265,6 +266,31 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [configSyncLista, usuarioActual]);
 
+  // Ventas cobradas con más cantidad de un producto de la que había en
+  // stock (ver comandos::listar_ventas_stock_pendiente) — a diferencia del
+  // aviso de "stock bajo" de arriba, este SÍ es visible para el cajero
+  // (filtrado a sus propias ventas más abajo, junto a esAdmin): tiene que
+  // enterarse de que quedó algo pendiente de explicar, aunque no pueda
+  // cerrarlo él mismo.
+  const [stockPendiente, setStockPendiente] = useState<VentaItemStockPendiente[]>([]);
+  const [mostrarStockPendiente, setMostrarStockPendiente] = useState(false);
+
+  async function cargarStockPendiente() {
+    try {
+      setStockPendiente(await invoke<VentaItemStockPendiente[]>("listar_ventas_stock_pendiente"));
+    } catch {
+      // si falla, se reintenta solo en el próximo ciclo
+    }
+  }
+
+  useEffect(() => {
+    if (!configSyncLista || !usuarioActual) return;
+    cargarStockPendiente();
+    const id = setInterval(cargarStockPendiente, 20_000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [configSyncLista, usuarioActual]);
+
   // Pedidos de delivery recién llegados sin revisar (ver delivery.rs, tarea
   // de fondo cada ~30s) — visible para CUALQUIER rol logueado (admin y
   // cajero): quien esté físicamente en la tienda tiene que enterarse,
@@ -464,6 +490,12 @@ export default function App() {
   // Alertas de "housekeeping" agrupadas en la campana de notificaciones —
   // ver Notificaciones.tsx. Los pedidos de delivery pendientes se quedan
   // como botón aparte, son una alerta operativa distinta.
+  // El cajero solo ve SUS PROPIAS ventas marcadas (para poder explicar qué
+  // pasó); el admin las ve todas (para corregir el inventario y cerrarlas).
+  const stockPendienteVisible = esAdmin
+    ? stockPendiente
+    : stockPendiente.filter((it) => it.vendedor_nombre === usuarioActual.nombre);
+
   const notificaciones: NotificacionItem[] = [];
   if (pendientesCodigo > 0) {
     notificaciones.push({
@@ -482,6 +514,14 @@ export default function App() {
         setAbrirInventarioFiltrado(true);
         setTab("inventario");
       },
+    });
+  }
+  if (stockPendienteVisible.length > 0) {
+    notificaciones.push({
+      key: "stock-pendiente",
+      texto: `📦 ${stockPendienteVisible.length} venta${stockPendienteVisible.length === 1 ? "" : "s"} con stock por revisar`,
+      color: "var(--danger-text)",
+      onClick: () => setMostrarStockPendiente(true),
     });
   }
   if (actualizacion) {
@@ -630,6 +670,25 @@ export default function App() {
         <PendientesCodigoBarras
           onCerrar={() => setMostrarPendientesCodigo(false)}
           onCambio={cargarPendientesCodigo}
+        />
+      )}
+      {mostrarStockPendiente && (
+        <StockPendiente
+          items={stockPendienteVisible}
+          esAdmin={esAdmin}
+          onCerrar={() => setMostrarStockPendiente(false)}
+          onGuardarNota={async (id, nota) => {
+            await invoke("guardar_nota_cajero_stock", { ventaItemId: id, nota });
+            await cargarStockPendiente();
+          }}
+          onResolver={async (id) => {
+            await invoke("resolver_stock_pendiente", {
+              ventaItemId: id,
+              adminUsuario: usuarioActual.nombre,
+              fechaHora: new Date().toISOString(),
+            });
+            await cargarStockPendiente();
+          }}
         />
       )}
       {actualizacion && actualizacion.version !== actualizacionSaltada && (

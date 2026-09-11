@@ -351,25 +351,49 @@ pub(crate) async fn confirmar_venta_interna(
         }
         let subtotal_linea = item.precio_unit_bs * item.cantidad;
 
+        // Se vende igual aunque no haya stock suficiente (no vale la pena
+        // trabar el cobro ni darle al cajero la excusa de "vendí otra cosa
+        // porque no me dejó") - pero la línea queda marcada para que un
+        // admin la revise y corrija el inventario real. stock_actual NUNCA
+        // baja de 0 (ver el MAX() de abajo): dejarlo negativo como "señal"
+        // descuadraría la próxima factura de compra que reciba mercancía de
+        // verdad, así que la diferencia real (cuánto se vendió de más)
+        // queda documentada acá, en stock_disponible_al_vender, no en el
+        // número de stock.
+        let stock_antes: f64 = tx
+            .query("SELECT stock_actual FROM productos WHERE id = ?1", libsql::params![item.producto_id.clone()])
+            .await
+            .map_err(|e| e.to_string())?
+            .next()
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "Un producto del carrito ya no existe.".to_string())?
+            .get(0)
+            .map_err(|e| e.to_string())?;
+        let stock_insuficiente = item.cantidad > stock_antes;
+        let stock_disponible_al_vender: Option<f64> = stock_insuficiente.then_some(stock_antes);
+
         tx.execute(
-            "INSERT INTO venta_items (id, venta_id, producto_id, cantidad, precio_unit_bs, subtotal_bs)
-             VALUES (lower(hex(randomblob(16))), ?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO venta_items (id, venta_id, producto_id, cantidad, precio_unit_bs, subtotal_bs, stock_insuficiente, stock_disponible_al_vender)
+             VALUES (lower(hex(randomblob(16))), ?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             libsql::params![
                 input.id.clone(),
                 item.producto_id.clone(),
                 item.cantidad,
                 item.precio_unit_bs,
                 subtotal_linea,
+                stock_insuficiente as i64,
+                stock_disponible_al_vender,
             ],
         )
         .await
         .map_err(|e| e.to_string())?;
 
         // Vender/consumir hasta agotar el stock ya no desactiva el producto
-        // solo — se puede seguir buscando y vendiendo aunque quede en 0 (o
-        // negativo). Un producto solo se desactiva a mano, desde Inventario.
+        // solo — se puede seguir buscando y vendiendo aunque quede en 0. Un
+        // producto solo se desactiva a mano, desde Inventario.
         tx.execute(
-            "UPDATE productos SET stock_actual = stock_actual - ?1 WHERE id = ?2",
+            "UPDATE productos SET stock_actual = MAX(0, stock_actual - ?1) WHERE id = ?2",
             libsql::params![item.cantidad, item.producto_id.clone()],
         )
         .await
@@ -431,6 +455,92 @@ pub async fn confirmar_venta(
     resultado.numero_ticket = format!("PEND-{}", resultado.numero_ticket);
     resultado.sin_conexion = true;
     Ok(resultado)
+}
+
+#[derive(Debug, Serialize)]
+pub struct VentaItemStockPendiente {
+    pub id: String,
+    pub venta_id: String,
+    pub numero_ticket: String,
+    pub fecha_hora: String,
+    pub vendedor_nombre: Option<String>,
+    pub producto_nombre: String,
+    pub cantidad_vendida: f64,
+    pub stock_disponible_al_vender: Option<f64>,
+    pub nota_cajero: Option<String>,
+}
+
+/// Todas las líneas de venta que se cobraron sin stock suficiente y
+/// todavía no revisó un admin - ver el comentario de la migración
+/// 0027_stock_insuficiente.sql. El frontend filtra esta misma lista según
+/// el rol: el cajero ve solo las suyas (para poder explicar qué pasó,
+/// nunca cerrarlas), el admin las ve todas (para corregir el inventario y
+/// cerrarlas).
+#[tauri::command]
+pub async fn listar_ventas_stock_pendiente(app: tauri::AppHandle) -> Result<Vec<VentaItemStockPendiente>, String> {
+    let conn = conexion(&app).await?;
+    let mut filas = conn
+        .query(
+            "SELECT vi.id, vi.venta_id, v.numero_ticket, v.fecha_hora, v.vendedor_nombre, p.nombre, vi.cantidad, vi.stock_disponible_al_vender, vi.nota_cajero
+             FROM venta_items vi
+             JOIN ventas v ON v.id = vi.venta_id
+             JOIN productos p ON p.id = vi.producto_id
+             WHERE vi.stock_insuficiente = 1 AND vi.revisado_admin = 0
+             ORDER BY v.fecha_hora DESC",
+            (),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut resultado = Vec::new();
+    while let Some(fila) = filas.next().await.map_err(|e| e.to_string())? {
+        resultado.push(VentaItemStockPendiente {
+            id: fila.get(0).map_err(|e| e.to_string())?,
+            venta_id: fila.get(1).map_err(|e| e.to_string())?,
+            numero_ticket: fila.get(2).map_err(|e| e.to_string())?,
+            fecha_hora: fila.get(3).map_err(|e| e.to_string())?,
+            vendedor_nombre: fila.get(4).map_err(|e| e.to_string())?,
+            producto_nombre: fila.get(5).map_err(|e| e.to_string())?,
+            cantidad_vendida: fila.get(6).map_err(|e| e.to_string())?,
+            stock_disponible_al_vender: fila.get(7).map_err(|e| e.to_string())?,
+            nota_cajero: fila.get(8).map_err(|e| e.to_string())?,
+        });
+    }
+    Ok(resultado)
+}
+
+/// El cajero deja su propia explicación de qué pasó — no cierra el caso
+/// (eso lo hace solo un admin con resolver_stock_pendiente), así que no
+/// hace falta validar ningún rol acá.
+#[tauri::command]
+pub async fn guardar_nota_cajero_stock(app: tauri::AppHandle, venta_item_id: String, nota: String) -> Result<(), String> {
+    let conn = conexion(&app).await?;
+    conn.execute(
+        "UPDATE venta_items SET nota_cajero = ?1 WHERE id = ?2",
+        libsql::params![nota, venta_item_id],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Cierra el caso — solo admin (se valida en el frontend, como el resto de
+/// los controles de admin de esta app). Se asume que antes de llamar esto
+/// ya se corrigió el inventario real (a mano, o con editar_venta_items).
+#[tauri::command]
+pub async fn resolver_stock_pendiente(
+    app: tauri::AppHandle,
+    venta_item_id: String,
+    admin_usuario: String,
+    fecha_hora: String,
+) -> Result<(), String> {
+    let conn = conexion(&app).await?;
+    conn.execute(
+        "UPDATE venta_items SET revisado_admin = 1, revisado_por = ?1, revisado_en = ?2 WHERE id = ?3",
+        libsql::params![admin_usuario, fecha_hora, venta_item_id],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// Reemplaza los productos/cantidades de una venta ya registrada — pensado

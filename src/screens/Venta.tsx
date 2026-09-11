@@ -280,6 +280,11 @@ export default function Venta({
     clienteDireccion: string | null;
     tasa: number;
     sinConexion: boolean;
+    // Nombres de productos vendidos con más cantidad de la que había en
+    // stock — ver comandos::confirmar_venta_interna. La venta se cobró
+    // igual; queda marcada para que un admin la revise (ver
+    // StockPendiente.tsx), esto es solo el aviso inmediato al cajero.
+    productosStockInsuficiente: string[];
   }>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -920,13 +925,12 @@ export default function Venta({
       setMensaje("Agrega al menos un producto antes de cobrar.");
       return;
     }
-    const sinStock = carrito.find((l) => l.cantidad > l.stock_disponible);
-    if (sinStock) {
-      const continuar = confirm(
-        `"${sinStock.nombre}" tiene ${sinStock.stock_disponible} en stock y estás vendiendo ${sinStock.cantidad}. ¿Continuar de todas formas?`
-      );
-      if (!continuar) return;
-    }
+    // Ya no se le pregunta al cajero si quiere "continuar de todas formas"
+    // — ese cartel lo cerraba cualquiera sin que quedara rastro. Ahora la
+    // venta se cobra siempre igual; confirmar_venta_interna (Rust) clampa
+    // el stock en 0 y marca la línea para que un admin la revise (ver
+    // migración 0027_stock_insuficiente.sql). El aviso al cajero se
+    // muestra DESPUÉS, junto al ticket ya emitido (no bloquea el cobro).
 
     const totalPagadoBase = pagosBase.reduce((acc, p) => acc + p.monto_bs, 0);
     // Contra el total COMBINADO (carrito + deuda vieja si se eligió sumarla)
@@ -1121,6 +1125,7 @@ export default function Venta({
       clienteDireccion: activo.clienteDireccion,
       tasa: config.tasa_cambio_dia,
       sinConexion,
+      productosStockInsuficiente: carrito.filter((l) => l.cantidad > l.stock_disponible).map((l) => l.nombre),
     });
 
     setTickets((prev) => {
@@ -1161,6 +1166,16 @@ export default function Venta({
         {recibo.sinConexion && (
           <p style={{ background: "var(--credito-bg)", color: "var(--credito-text)", padding: "8px 12px", borderRadius: 6, fontWeight: 600 }}>
             ⚠ Guardada sin conexión — el número de ticket es provisional y se ajustará solo cuando vuelva internet.
+          </p>
+        )}
+        {recibo.productosStockInsuficiente.length > 0 && (
+          <p
+            className="no-print"
+            style={{ background: "var(--danger-bg)", color: "var(--danger-text)", padding: "8px 12px", borderRadius: 6, fontWeight: 600 }}
+          >
+            📦 Vendiste más de lo que había en stock de: {recibo.productosStockInsuficiente.join(", ")}. Quedó
+            marcado para que un admin revise el inventario — contá qué pasó en "Stock por revisar" (campanita de
+            notificaciones).
           </p>
         )}
         <img src={logo} alt={config.nombre_negocio} className="ticket-logo" />

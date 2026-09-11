@@ -274,12 +274,16 @@ export default function App() {
   // cerrarlo él mismo.
   const [stockPendiente, setStockPendiente] = useState<VentaItemStockPendiente[]>([]);
   const [mostrarStockPendiente, setMostrarStockPendiente] = useState(false);
+  const [errorStockPendiente, setErrorStockPendiente] = useState<string | null>(null);
 
   async function cargarStockPendiente() {
     try {
       setStockPendiente(await invoke<VentaItemStockPendiente[]>("listar_ventas_stock_pendiente"));
-    } catch {
-      // si falla, se reintenta solo en el próximo ciclo
+      setErrorStockPendiente(null);
+    } catch (e) {
+      // antes esto quedaba en silencio total — ahora se guarda el error
+      // para mostrarlo en la campanita, así no queda invisible si falla.
+      setErrorStockPendiente(String(e));
     }
   }
 
@@ -522,6 +526,13 @@ export default function App() {
       texto: `📦 ${stockPendienteVisible.length} venta${stockPendienteVisible.length === 1 ? "" : "s"} con stock por revisar`,
       color: "var(--danger-text)",
       onClick: () => setMostrarStockPendiente(true),
+    });
+  } else if (errorStockPendiente) {
+    notificaciones.push({
+      key: "stock-pendiente-error",
+      texto: "📦 No se pudo revisar el stock pendiente",
+      error: errorStockPendiente,
+      onClick: () => {},
     });
   }
   if (actualizacion) {

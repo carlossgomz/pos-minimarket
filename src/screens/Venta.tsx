@@ -1340,7 +1340,24 @@ export default function Venta({
                       fontSize: 14,
                     }}
                   >
-                    <span>{p.nombre}</span>
+                    <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      {p.nombre}
+                      {p.stock_actual <= 0 && (
+                        <span
+                          style={{
+                            color: "var(--danger-text)",
+                            fontWeight: 700,
+                            fontSize: 11,
+                            border: "1px solid var(--danger-text)",
+                            borderRadius: 4,
+                            padding: "1px 4px",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          SIN STOCK
+                        </span>
+                      )}
+                    </span>
                     <span style={{ color: "var(--text-secondary)" }}>
                       {p.codigo_barra} · Bs {precioVentaBsHoy(p, config.tasa_cambio_dia).toFixed(2)} (USD{" "}
                       {precioVentaUsd(p).toFixed(2)})

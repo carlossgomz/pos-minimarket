@@ -33,6 +33,8 @@ export default function Inventario({
   const [busqueda, setBusqueda] = useState("");
   const [categoriaFiltro, setCategoriaFiltro] = useState("");
   const [soloProblemas, setSoloProblemas] = useState(soloProblemasInicial ?? false);
+  const [mostrarNuevaCategoria, setMostrarNuevaCategoria] = useState(false);
+  const [nuevaCategoriaNombre, setNuevaCategoriaNombre] = useState("");
   // El catálogo completo puede ser cientos de productos — sin paginar,
   // cada uno con varios <input>/<select> editables, la tabla entera se
   // vuelve muchísimos nodos del DOM de una sola vez, y eso es justo lo
@@ -80,6 +82,23 @@ export default function Inventario({
   useEffect(() => {
     cargarCategorias();
   }, []);
+
+  async function crearCategoria(e: React.FormEvent) {
+    e.preventDefault();
+    const nombreCat = nuevaCategoriaNombre.trim();
+    if (!nombreCat) return;
+    const db = await getDb();
+    try {
+      await db.execute("INSERT INTO categorias (id, nombre) VALUES ($1,$2)", [crypto.randomUUID(), nombreCat]);
+    } catch (err) {
+      setMensaje(`No se pudo crear la categoría (¿ya existe?): ${String(err)}`);
+      return;
+    }
+    setMensaje(null);
+    setNuevaCategoriaNombre("");
+    setMostrarNuevaCategoria(false);
+    await cargarCategorias();
+  }
 
   // Debounce — sin esto, cada letra tecleada dispara una consulta contra
   // la base remota de una (esta pantalla no puede usar la caché local
@@ -342,6 +361,32 @@ export default function Inventario({
                 </option>
               ))}
             </select>
+            {mostrarNuevaCategoria ? (
+              <form className="form-row" style={{ alignItems: "center", gap: 6 }} onSubmit={crearCategoria}>
+                <input
+                  autoFocus
+                  placeholder="Nombre de la categoría"
+                  value={nuevaCategoriaNombre}
+                  onChange={(e) => setNuevaCategoriaNombre(e.target.value)}
+                  style={{ width: 160 }}
+                />
+                <button type="submit">Guardar</button>
+                <button
+                  type="button"
+                  className="link-btn"
+                  onClick={() => {
+                    setMostrarNuevaCategoria(false);
+                    setNuevaCategoriaNombre("");
+                  }}
+                >
+                  cancelar
+                </button>
+              </form>
+            ) : (
+              <button type="button" className="link-btn" onClick={() => setMostrarNuevaCategoria(true)}>
+                + Nueva categoría
+              </button>
+            )}
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
               <input
                 type="checkbox"

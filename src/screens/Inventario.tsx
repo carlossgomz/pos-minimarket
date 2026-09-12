@@ -33,6 +33,13 @@ export default function Inventario({
   const [busqueda, setBusqueda] = useState("");
   const [categoriaFiltro, setCategoriaFiltro] = useState("");
   const [soloProblemas, setSoloProblemas] = useState(soloProblemasInicial ?? false);
+  // Ahora que esta pantalla queda siempre montada (ver App.tsx), el valor
+  // inicial de useState de arriba solo se aplica la PRIMERA vez — sin este
+  // efecto, hacer clic de nuevo en el aviso de "stock bajo" desde otra
+  // pestaña ya no activaría el filtro las veces siguientes.
+  useEffect(() => {
+    if (soloProblemasInicial) setSoloProblemas(true);
+  }, [soloProblemasInicial]);
   const [mostrarNuevaCategoria, setMostrarNuevaCategoria] = useState(false);
   const [nuevaCategoriaNombre, setNuevaCategoriaNombre] = useState("");
   // El catálogo completo puede ser cientos de productos — sin paginar,

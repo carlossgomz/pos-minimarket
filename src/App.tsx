@@ -722,19 +722,41 @@ export default function App() {
       <div style={{ display: tabEfectivo === "venta" ? "block" : "none" }}>
         <Venta config={config} vendedor={vendedorActual} onTasaVista={cargarConfig} visible={tabEfectivo === "venta"} />
       </div>
-      {tabEfectivo === "inventario" && (
+      {/* Estas pantallas también quedan siempre montadas (solo ocultas con
+          CSS), mismo criterio que Venta — así una factura de compra a
+          medio cargar, un cierre de caja sin guardar, o cualquier filtro
+          en curso no se pierden solo por revisar otra pestaña un momento. */}
+      <div style={{ display: tabEfectivo === "inventario" ? "block" : "none" }}>
         <Inventario config={config} soloProblemasInicial={abrirInventarioFiltrado} />
+      </div>
+      {esAdmin && (
+        <div style={{ display: tabEfectivo === "movimientos" ? "block" : "none" }}>
+          <Movimientos config={config} />
+        </div>
       )}
-      {esAdmin && tabEfectivo === "movimientos" && <Movimientos config={config} />}
-      {esAdmin && tabEfectivo === "compras" && <Compras config={config} onConfigActualizado={cargarConfig} />}
+      {esAdmin && (
+        <div style={{ display: tabEfectivo === "compras" ? "block" : "none" }}>
+          <Compras config={config} onConfigActualizado={cargarConfig} />
+        </div>
+      )}
       {tabEfectivo === "cuentas" && <Cuentas config={config} esAdmin={esAdmin} />}
-      {tabEfectivo === "cuadre" && <CuadreCaja config={config} />}
-      {tabEfectivo === "clientes" && <Clientes />}
-      {esAdmin && tabEfectivo === "proveedores" && <Proveedores />}
+      <div style={{ display: tabEfectivo === "cuadre" ? "block" : "none" }}>
+        <CuadreCaja config={config} />
+      </div>
+      <div style={{ display: tabEfectivo === "clientes" ? "block" : "none" }}>
+        <Clientes />
+      </div>
+      {esAdmin && (
+        <div style={{ display: tabEfectivo === "proveedores" ? "block" : "none" }}>
+          <Proveedores />
+        </div>
+      )}
       {esAdmin && tabEfectivo === "usuarios" && <Usuarios usuarioActual={usuarioActual} />}
       {esAdmin && tabEfectivo === "reportes" && <Reportes config={config} />}
       {esAdmin && tabEfectivo === "estadisticas" && <Estadisticas config={config} />}
-      {tabEfectivo === "facturas" && <Facturas config={config} esAdmin={esAdmin} />}
+      <div style={{ display: tabEfectivo === "facturas" ? "block" : "none" }}>
+        <Facturas config={config} esAdmin={esAdmin} />
+      </div>
 
       {mostrarPendientesCodigo && (
         <PendientesCodigoBarras

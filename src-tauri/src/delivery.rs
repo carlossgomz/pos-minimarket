@@ -101,6 +101,7 @@ struct ProductoParaEmpuje {
     margen_porcentaje: Option<f64>,
     categoria_nombre: Option<String>,
     disponible_delivery: i64,
+    stock_actual: f64,
 }
 
 /// Empuja el catálogo activo completo (no solo lo que cambió — a esta
@@ -109,11 +110,18 @@ struct ProductoParaEmpuje {
 /// disponible_delivery=1: así, si un producto se acaba de excluir, la
 /// delivery-app recibe el disponibleDelivery=false que lo saca de su
 /// catálogo — si solo mandara lo incluido, nunca se enteraría del cambio.
+///
+/// Incluye `hayStock` (stock_actual > 0) para que la delivery-app pueda
+/// marcar el producto disponible/no-disponible SOLA según el inventario
+/// real del POS, sin depender de que alguien lo desactive o reactive a
+/// mano ahí (ver Product.activo en delivery-app — antes de esto era un
+/// interruptor 100% manual, y se perdían ventas cuando alguien se
+/// olvidaba de reactivar un producto que ya había vuelto a tener stock).
 async fn sincronizar_catalogo(conn: &libsql::Connection, cfg: &ConfigDelivery) -> Result<usize, String> {
     let mut filas = conn
         .query(
             "SELECT p.id, p.codigo_barra, p.nombre, p.costo_actual_usd, p.margen_porcentaje,
-                    c.nombre as categoria_nombre, p.disponible_delivery
+                    c.nombre as categoria_nombre, p.disponible_delivery, p.stock_actual
              FROM productos p LEFT JOIN categorias c ON c.id = p.categoria_id
              WHERE p.activo = 1",
             (),
@@ -131,6 +139,7 @@ async fn sincronizar_catalogo(conn: &libsql::Connection, cfg: &ConfigDelivery) -
             margen_porcentaje: fila.get(4).map_err(|e| e.to_string())?,
             categoria_nombre: fila.get(5).map_err(|e| e.to_string())?,
             disponible_delivery: fila.get(6).map_err(|e| e.to_string())?,
+            stock_actual: fila.get(7).map_err(|e| e.to_string())?,
         });
     }
 
@@ -148,6 +157,7 @@ async fn sincronizar_catalogo(conn: &libsql::Connection, cfg: &ConfigDelivery) -
                 "precioUsd": precio_venta_usd(p.costo_actual_usd, p.margen_porcentaje),
                 "categoria": p.categoria_nombre.clone().unwrap_or_else(|| "Sin categoría".to_string()),
                 "disponibleDelivery": p.disponible_delivery != 0,
+                "hayStock": p.stock_actual > 0.0,
             })
         })
         .collect();

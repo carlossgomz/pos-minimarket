@@ -132,12 +132,21 @@ export default function CuadreCaja({ config }: { config: ConfigRow }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fecha]);
 
+  // Solo el cierre del día actual se puede editar — uno de días anteriores
+  // ya se cerró contablemente, corregirlo a posteriori podría desmentir un
+  // arqueo que ya se dio por bueno (y en el peor caso, uno que el dueño ya
+  // revisó). Se compara contra la fecha de Venezuela, no la del sistema
+  // operativo, igual que el resto de la app.
+  const esHoy = fecha === hoyISO();
+
   function actualizarContado(metodo: string, valor: string) {
+    if (!esHoy) return;
     setIngresos((prev) => prev.map((f) => (f.metodo === metodo ? { ...f, contado: valor } : f)));
     setGuardado(false);
   }
 
   async function guardarCierre() {
+    if (!esHoy) return;
     setGuardando(true);
     setMensaje(null);
     const db = await getDb();
@@ -224,6 +233,7 @@ export default function CuadreCaja({ config }: { config: ConfigRow }) {
                     value={f.contado}
                     onChange={(e) => actualizarContado(f.metodo, e.target.value)}
                     placeholder={`0.00 ${simbolo}`}
+                    disabled={!esHoy}
                   />
                 </td>
                 <td className={diff && Math.abs(diff) > 0.01 ? "restante-pendiente" : ""}>
@@ -287,6 +297,12 @@ export default function CuadreCaja({ config }: { config: ConfigRow }) {
       </div>
 
       <div className="card">
+        {!esHoy && (
+          <p className="hint" style={{ marginTop: 0 }}>
+            🔒 Este cierre ya pasó — solo se puede ver, no editar. Volvé a la fecha de hoy para cargar
+            el conteo del día.
+          </p>
+        )}
         {mensaje && (
           <p className="error" style={{ marginTop: 10 }}>
             {mensaje}
@@ -297,9 +313,11 @@ export default function CuadreCaja({ config }: { config: ConfigRow }) {
             Cierre guardado ✅ — puedes corregirlo y guardar de nuevo si hace falta.
           </p>
         )}
-        <button className="cobrar-btn" onClick={guardarCierre} disabled={guardando}>
-          {guardando ? "Guardando…" : "Guardar cierre del día"}
-        </button>
+        {esHoy && (
+          <button className="cobrar-btn" onClick={guardarCierre} disabled={guardando}>
+            {guardando ? "Guardando…" : "Guardar cierre del día"}
+          </button>
+        )}
       </div>
     </div>
   );

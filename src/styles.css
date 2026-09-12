@@ -184,15 +184,22 @@ body {
   justify-content: center;
   padding: 40px 16px;
   z-index: 100;
-  overflow-y: auto;
 }
 
+/* El scroll vive ACÁ, no en .modal-fondo — si el fondo fuera el que
+   scrollea, su barra lateral queda pegada al borde de la ventana y
+   arrastrarla dispara el onMouseDown de "cerrar al hacer clic afuera"
+   (el navegador no distingue un clic en la scrollbar de un clic en el
+   elemento). Con el scroll acá adentro, la barra queda dentro de la
+   caja, que ya frena la propagación de sus propios clics. */
 .modal-caja {
   background: var(--bg-card);
   border-radius: 12px;
   padding: 24px;
   max-width: 720px;
   width: 100%;
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
 }
 

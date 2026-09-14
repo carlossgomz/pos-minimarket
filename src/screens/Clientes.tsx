@@ -3,7 +3,7 @@ import { getDb } from "../db";
 import { Cliente, VentaResumen } from "../types";
 import { normalizarTexto, sqlSinAcentos } from "../busqueda";
 
-export default function Clientes() {
+export default function Clientes({ visible }: { visible: boolean }) {
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [busqueda, setBusqueda] = useState("");
   const [seleccionado, setSeleccionado] = useState<Cliente | null>(null);
@@ -35,6 +35,17 @@ export default function Clientes() {
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busqueda]);
+
+  // Esta pantalla queda siempre montada (ver App.tsx) — sin esto, la
+  // lista y la ficha abierta quedaban congeladas con lo último visto acá
+  // (ej. un crédito nuevo dado en Venta no se reflejaba en el saldo hasta
+  // reiniciar la app).
+  useEffect(() => {
+    if (!visible) return;
+    cargarClientes();
+    if (seleccionado) abrirFicha(seleccionado);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
 
   async function abrirFicha(c: Cliente) {
     setSeleccionado(c);

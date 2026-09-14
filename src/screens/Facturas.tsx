@@ -21,7 +21,15 @@ function hoyISO() {
   return fechaHoraVenezuela().slice(0, 10);
 }
 
-export default function Facturas({ config, esAdmin }: { config: ConfigRow; esAdmin: boolean }) {
+export default function Facturas({
+  config,
+  esAdmin,
+  visible,
+}: {
+  config: ConfigRow;
+  esAdmin: boolean;
+  visible: boolean;
+}) {
   const [desde, setDesde] = useState(hoyISO());
   const [hasta, setHasta] = useState(hoyISO());
   const [busqueda, setBusqueda] = useState("");
@@ -94,6 +102,14 @@ export default function Facturas({ config, esAdmin }: { config: ConfigRow; esAdm
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [desde, hasta, busqueda, metodoFiltro, canalFiltro]);
+
+  // Esta pantalla queda siempre montada (ver App.tsx) — sin esto, la lista
+  // quedaba congelada con lo último visto acá, sin mostrar ventas nuevas
+  // registradas mientras se estaba en otra pestaña.
+  useEffect(() => {
+    if (visible) cargarLista();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
 
   async function abrirFactura(id: string) {
     const db = await getDb();

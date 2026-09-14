@@ -21,9 +21,11 @@ const SIN_CATEGORIA = "__SIN_CATEGORIA__";
 export default function Inventario({
   config,
   soloProblemasInicial,
+  visible,
 }: {
   config: ConfigRow;
   soloProblemasInicial?: boolean;
+  visible: boolean;
 }) {
   const [productos, setProductos] = useState<ProductoConMovimientos[]>([]);
   const [categorias, setCategorias] = useState<Categoria[]>([]);
@@ -118,6 +120,17 @@ export default function Inventario({
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busqueda]);
+
+  // Esta pantalla queda siempre montada (ver App.tsx), así que sin esto el
+  // catálogo (stock, precios) se quedaba congelado con los datos de la
+  // última vez que se entró acá — vender algo en Venta y volver a
+  // Inventario sin tocar el buscador nunca mostraba el stock real
+  // actualizado. No pisa nada que el cajero esté escribiendo (el alta
+  // rápida de producto vive en sus propios campos, aparte de "productos").
+  useEffect(() => {
+    if (visible) cargar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
 
   // "Problema" acá son solo los casos duros (agotado o 1 sola unidad) — el
   // "stock bajo" por mínimo configurable ya no cuenta como advertencia,

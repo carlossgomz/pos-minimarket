@@ -3,7 +3,7 @@ import { getDb } from "../db";
 import { FacturaResumen, Proveedor } from "../types";
 import { normalizarTexto, sqlSinAcentos } from "../busqueda";
 
-export default function Proveedores() {
+export default function Proveedores({ visible }: { visible: boolean }) {
   const [proveedores, setProveedores] = useState<Proveedor[]>([]);
   const [busqueda, setBusqueda] = useState("");
   const [seleccionado, setSeleccionado] = useState<Proveedor | null>(null);
@@ -99,6 +99,17 @@ export default function Proveedores() {
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busqueda]);
+
+  // Esta pantalla queda siempre montada (ver App.tsx) — sin esto, la
+  // lista y la ficha abierta quedaban congeladas con lo último visto acá
+  // (ej. un pago a proveedor registrado en otra pestaña no se reflejaba
+  // en el saldo hasta reiniciar la app).
+  useEffect(() => {
+    if (!visible) return;
+    cargarProveedores();
+    if (seleccionado) abrirFicha(seleccionado);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
 
   async function abrirFicha(p: Proveedor) {
     setSeleccionado(p);

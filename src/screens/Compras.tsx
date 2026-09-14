@@ -31,9 +31,11 @@ function Campo({ label, children }: { label: string; children: ReactNode }) {
 export default function Compras({
   config,
   onConfigActualizado,
+  visible,
 }: {
   config: ConfigRow;
   onConfigActualizado: () => void;
+  visible: boolean;
 }) {
   // --- Escanear factura con IA (Gemini) ---
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -148,6 +150,20 @@ export default function Compras({
     cargarProveedores();
     cargarFacturas();
   }, []);
+
+  // Esta pantalla queda siempre montada (ver App.tsx) para no perder una
+  // factura a medio cargar — pero eso significa que el efecto de arriba
+  // (deps []) ya no vuelve a correr solo. Sin este, un proveedor nuevo
+  // agregado desde otra pestaña, o una factura guardada/borrada en otro
+  // momento, no aparecían hasta reiniciar. NO toca ningún campo de la
+  // factura en construcción — solo refresca las listas de referencia.
+  useEffect(() => {
+    if (visible) {
+      cargarProveedores();
+      cargarFacturas();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
 
   async function toggleDetalleFactura(id: string) {
     if (facturaDetalleAbierta === id) {

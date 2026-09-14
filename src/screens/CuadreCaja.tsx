@@ -36,7 +36,7 @@ function armarFilas(
   });
 }
 
-export default function CuadreCaja({ config }: { config: ConfigRow }) {
+export default function CuadreCaja({ config, visible }: { config: ConfigRow; visible: boolean }) {
   const [fecha, setFecha] = useState(hoyISO());
   const [ingresos, setIngresos] = useState<Fila[]>([]);
   // Puramente informativo — de dónde sale el número de EFECTIVO en
@@ -50,9 +50,11 @@ export default function CuadreCaja({ config }: { config: ConfigRow }) {
   const [mensaje, setMensaje] = useState<string | null>(null);
   const tasa = config.tasa_cambio_dia;
 
-  async function cargar() {
-    setMensaje(null);
-    setGuardado(false);
+  // Todo lo que se vendió/cobró ese día, calculado desde cero — se separó
+  // de cargar() para poder refrescar SOLO estos números (ver
+  // actualizarEsperado más abajo) sin pisar lo que el cajero ya escribió a
+  // mano en "contado" y todavía no guardó.
+  async function calcularEsperados() {
     const db = await getDb();
 
     const porVenta = await db.select<{ metodo: string; monto: number }[]>(
@@ -114,6 +116,14 @@ export default function CuadreCaja({ config }: { config: ConfigRow }) {
     if (aporteCapitalExterno > 0 || avanceEfectivo > 0) {
       esperadosIngreso.EFECTIVO = (esperadosIngreso.EFECTIVO ?? 0) + aporteCapitalExterno - avanceEfectivo;
     }
+    return { esperadosIngreso, aporteCapitalExterno, avanceEfectivo };
+  }
+
+  async function cargar() {
+    setMensaje(null);
+    setGuardado(false);
+    const db = await getDb();
+    const { esperadosIngreso, aporteCapitalExterno, avanceEfectivo } = await calcularEsperados();
     setAporteCapitalExterno(aporteCapitalExterno);
     setAvanceEfectivo(avanceEfectivo);
 
@@ -127,10 +137,29 @@ export default function CuadreCaja({ config }: { config: ConfigRow }) {
     setIngresos(armarFilas(esperadosIngreso, contadosIngresoBs, tasa));
   }
 
+  // Como esta pantalla ahora queda siempre montada (no se desmonta al
+  // cambiar de pestaña — ver App.tsx), sin esto el "esperado" de cada
+  // método quedaba congelado con el número de la última vez que se entró
+  // acá: cargar() solo se dispara cuando cambia la fecha, así que vender
+  // algo en Venta y volver a Cuadre de Caja sin tocar la fecha nunca
+  // refrescaba nada. A diferencia de cargar(), esto NO toca "contado" —
+  // si el cajero ya escribió algo ahí y todavía no lo guardó, se respeta.
+  async function actualizarEsperado() {
+    const { esperadosIngreso, aporteCapitalExterno, avanceEfectivo } = await calcularEsperados();
+    setAporteCapitalExterno(aporteCapitalExterno);
+    setAvanceEfectivo(avanceEfectivo);
+    setIngresos((prev) => prev.map((f) => ({ ...f, esperado: esperadosIngreso[f.metodo] ?? 0 })));
+  }
+
   useEffect(() => {
     cargar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fecha]);
+
+  useEffect(() => {
+    if (visible) actualizarEsperado();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
 
   // Solo el cierre del día actual se puede editar — uno de días anteriores
   // ya se cerró contablemente, corregirlo a posteriori podría desmentir un

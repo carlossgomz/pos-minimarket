@@ -9,7 +9,7 @@ import { normalizarTexto, sqlSinAcentos } from "../busqueda";
 // Todo lo de acá es por producto individual — no hay ningún número que
 // sume varios productos entre sí. Para ver el panorama general de precios
 // y stock de todo el catálogo, esa es la pestaña Inventario.
-export default function Movimientos({ config }: { config: ConfigRow }) {
+export default function Movimientos({ config, visible }: { config: ConfigRow; visible: boolean }) {
   const [busqueda, setBusqueda] = useState("");
   const [resultados, setResultados] = useState<ProductoInventario[]>([]);
   const [mostrarDropdown, setMostrarDropdown] = useState(false);
@@ -117,6 +117,14 @@ export default function Movimientos({ config }: { config: ConfigRow }) {
     cargarMovimientos(productoSeleccionado?.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [productoSeleccionado]);
+
+  // Esta pantalla queda siempre montada (ver App.tsx) — sin esto, el
+  // listado/totales quedaban congelados con lo último visto acá, sin
+  // reflejar movimientos registrados mientras se estaba en otra pestaña.
+  useEffect(() => {
+    if (visible) cargarMovimientos(productoSeleccionado?.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
 
   function seleccionarProducto(p: ProductoInventario) {
     setProductoSeleccionado(p);

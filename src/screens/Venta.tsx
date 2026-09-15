@@ -246,18 +246,21 @@ export default function Venta({
   const consumoInternoRef = useRef(consumoInterno);
   consumoInternoRef.current = consumoInterno;
 
+  // Antes usaba el confirm() nativo del navegador acá — dentro de una
+  // ventana de Tauri/WebView2 ese diálogo nativo a veces no aparece al
+  // frente (queda detrás de la ventana principal o sin el foco correcto),
+  // así que el cajero veía el programa "trabado" sin poder cerrar, cuando
+  // en realidad estaba esperando una respuesta a un diálogo invisible. Un
+  // modal propio, dibujado dentro de la misma ventana, siempre se ve.
+  const [confirmarCierreVentana, setConfirmarCierreVentana] = useState(false);
+
   useEffect(() => {
-    const unlistenPromise = getCurrentWindow().onCloseRequested(async (event) => {
+    const unlistenPromise = getCurrentWindow().onCloseRequested((event) => {
       const hayTrabajoSinGuardar =
         ticketsRef.current.some((t) => t.carrito.length > 0) || consumoInternoRef.current.length > 0;
       if (!hayTrabajoSinGuardar) return;
       event.preventDefault();
-      const cerrar = confirm(
-        "Hay tickets abiertos o consumo interno sin guardar — se van a perder si cerrás ahora. ¿Cerrar de todas formas?"
-      );
-      if (cerrar) {
-        await getCurrentWindow().destroy();
-      }
+      setConfirmarCierreVentana(true);
     });
     return () => {
       unlistenPromise.then((unlisten) => unlisten());
@@ -2158,6 +2161,28 @@ export default function Venta({
               </button>
               <button className="link-btn" onClick={cancelarConfirmacionVenta} disabled={guardando}>
                 cancelar, quiero revisar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmarCierreVentana && (
+        <div className="modal-fondo" onMouseDown={() => setConfirmarCierreVentana(false)}>
+          <div className="modal-caja" onMouseDown={(e) => e.stopPropagation()}>
+            <h2>¿Cerrar el programa?</h2>
+            <p className="hint">
+              Hay tickets abiertos o consumo interno sin guardar — se van a perder si cerrás ahora.
+            </p>
+            <div className="form-row">
+              <button
+                className="link-btn link-btn-danger"
+                onClick={() => getCurrentWindow().destroy()}
+              >
+                Cerrar de todas formas
+              </button>
+              <button className="cobrar-btn" onClick={() => setConfirmarCierreVentana(false)}>
+                Cancelar, quiero revisar
               </button>
             </div>
           </div>

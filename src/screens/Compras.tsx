@@ -108,6 +108,46 @@ export default function Compras({
   const [facturaDetalleAbierta, setFacturaDetalleAbierta] = useState<string | null>(null);
   const [itemsDetalleCompra, setItemsDetalleCompra] = useState<FacturaCompraItemDetalle[]>([]);
 
+  // Corrige el proveedor de una factura ya registrada, para cuando se
+  // cargó bajo el proveedor equivocado por error — funciona incluso si la
+  // factura ya no es "editable" (ya se vendió algo de lo que trajo, o ya
+  // se le pagó al proveedor), porque el proveedor no tiene ninguna
+  // relación con el stock ni los lotes: es solo corregir a quién le
+  // corresponde esta factura y su saldo pendiente.
+  const [facturaCambiarProveedor, setFacturaCambiarProveedor] = useState<FacturaCompraResumen | null>(null);
+  const [nuevoProveedorId, setNuevoProveedorId] = useState("");
+  const [mensajeCambioProveedor, setMensajeCambioProveedor] = useState<string | null>(null);
+  const [guardandoCambioProveedor, setGuardandoCambioProveedor] = useState(false);
+
+  function empezarCambioProveedor(f: FacturaCompraResumen) {
+    setFacturaCambiarProveedor(f);
+    setNuevoProveedorId(f.proveedor_id);
+    setMensajeCambioProveedor(null);
+  }
+
+  async function confirmarCambioProveedor() {
+    if (!facturaCambiarProveedor) return;
+    if (!nuevoProveedorId || nuevoProveedorId === facturaCambiarProveedor.proveedor_id) {
+      setMensajeCambioProveedor("Elige un proveedor distinto al actual.");
+      return;
+    }
+    setGuardandoCambioProveedor(true);
+    setMensajeCambioProveedor(null);
+    try {
+      await invoke("cambiar_proveedor_factura_compra", {
+        input: { factura_compra_id: facturaCambiarProveedor.id, nuevo_proveedor_id: nuevoProveedorId },
+      });
+    } catch (e) {
+      setMensajeCambioProveedor(`No se pudo cambiar el proveedor: ${String(e)}`);
+      setGuardandoCambioProveedor(false);
+      return;
+    }
+    setGuardandoCambioProveedor(false);
+    setFacturaCambiarProveedor(null);
+    setNuevoProveedorId("");
+    await cargarFacturas();
+  }
+
   // --- Edición de una factura ya registrada: reutiliza el mismo
   // formulario/tabla de "líneas" que una factura nueva — al guardar, si
   // esto tiene un id, se llama a editar_factura_compra en vez de
@@ -1436,6 +1476,9 @@ export default function Compras({
                           ya no editable
                         </span>
                       )}
+                      <button className="link-btn" onClick={() => empezarCambioProveedor(f)}>
+                        cambiar proveedor
+                      </button>
                     </td>
                   </tr>
                   {facturaDetalleAbierta === f.id && (
@@ -1503,6 +1546,33 @@ export default function Compras({
           </table>
         </div>
       </div>
+
+      {facturaCambiarProveedor && (
+        <div className="card">
+          <h2>Cambiar proveedor de la factura {facturaCambiarProveedor.numero_factura}</h2>
+          <p className="hint">
+            Proveedor actual: {facturaCambiarProveedor.proveedor_nombre}. Esto solo corrige a quién
+            le corresponde la factura y su saldo pendiente — no toca el stock, los productos ni los
+            precios, así que funciona aunque la factura ya no sea editable.
+          </p>
+          <div className="form-row">
+            <select value={nuevoProveedorId} onChange={(e) => setNuevoProveedorId(e.target.value)}>
+              {proveedores.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.nombre} — {p.rif}
+                </option>
+              ))}
+            </select>
+            <button onClick={confirmarCambioProveedor} disabled={guardandoCambioProveedor}>
+              {guardandoCambioProveedor ? "Guardando…" : "Confirmar cambio"}
+            </button>
+            <button className="link-btn" onClick={() => setFacturaCambiarProveedor(null)}>
+              cancelar
+            </button>
+          </div>
+          {mensajeCambioProveedor && <p className="error">{mensajeCambioProveedor}</p>}
+        </div>
+      )}
     </div>
   );
 }

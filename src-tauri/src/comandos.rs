@@ -1528,6 +1528,63 @@ pub async fn ajustar_factura_compra(app: tauri::AppHandle, input: AjustarFactura
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+pub struct CambiarProveedorFacturaCompraInput {
+    factura_compra_id: String,
+    nuevo_proveedor_id: String,
+}
+
+/// Corrige el proveedor asignado a una factura de compra después de
+/// creada — para cuando se cargó bajo el proveedor equivocado por error.
+/// A diferencia de editar_factura_compra/eliminar_factura_compra, esto NO
+/// pasa por factura_compra_bloqueo: el proveedor no tiene ninguna relación
+/// con el stock, los lotes ni los movimientos de inventario (esos se
+/// referencian por producto y por factura, nunca por proveedor), así que
+/// corregirlo es seguro incluso después de que ya se vendió algo de lo que
+/// trajo esa factura o de que se le pagó al proveedor — el pago y el saldo
+/// simplemente pasan a contar para el proveedor correcto. Mismo criterio
+/// que ajustar_factura_compra (corrige el monto sin tocar stock).
+#[tauri::command]
+pub async fn cambiar_proveedor_factura_compra(
+    app: tauri::AppHandle,
+    input: CambiarProveedorFacturaCompraInput,
+) -> Result<(), String> {
+    let conn = conexion(&app).await?;
+    let tx = conn.transaction().await.map_err(|e| e.to_string())?;
+
+    let existe_factura = tx
+        .query("SELECT 1 FROM facturas_compra WHERE id = ?1", libsql::params![input.factura_compra_id.clone()])
+        .await
+        .map_err(|e| e.to_string())?
+        .next()
+        .await
+        .map_err(|e| e.to_string())?;
+    if existe_factura.is_none() {
+        return Err("Esa factura no existe.".to_string());
+    }
+
+    let existe_proveedor = tx
+        .query("SELECT 1 FROM proveedores WHERE id = ?1", libsql::params![input.nuevo_proveedor_id.clone()])
+        .await
+        .map_err(|e| e.to_string())?
+        .next()
+        .await
+        .map_err(|e| e.to_string())?;
+    if existe_proveedor.is_none() {
+        return Err("Ese proveedor no existe.".to_string());
+    }
+
+    tx.execute(
+        "UPDATE facturas_compra SET proveedor_id = ?1 WHERE id = ?2",
+        libsql::params![input.nuevo_proveedor_id.clone(), input.factura_compra_id.clone()],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    tx.commit().await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ItemConsumoInternoInput {
     producto_id: String,
     cantidad: f64,

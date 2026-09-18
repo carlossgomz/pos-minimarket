@@ -92,6 +92,7 @@ pub fn run() {
             comandos::registrar_abono_cliente_total,
             comandos::registrar_pago_proveedor,
             comandos::ajustar_factura_compra,
+            comandos::cambiar_proveedor_factura_compra,
             comandos::registrar_consumo_interno,
             comandos::guardar_factura_compra,
             comandos::editar_factura_compra,

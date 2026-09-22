@@ -1207,7 +1207,7 @@ export default function Venta({
             style={{ background: "var(--danger-bg)", color: "var(--danger-text)", padding: "8px 12px", borderRadius: 6, fontWeight: 600 }}
           >
             📦 Vendiste más de lo que había en stock de: {recibo.productosStockInsuficiente.join(", ")}. Quedó
-            marcado para que un admin revise el inventario — contá qué pasó en "Stock por revisar" (campanita de
+            marcado para que un admin revise el inventario — deja el detalle en "Stock por revisar" (campanita de
             notificaciones).
           </p>
         )}

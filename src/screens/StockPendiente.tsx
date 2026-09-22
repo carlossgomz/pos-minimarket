@@ -73,8 +73,8 @@ export default function StockPendiente({
         </div>
         <p className="hint" style={{ marginTop: 0 }}>
           {esAdmin
-            ? "Se cobraron con más cantidad de un producto de la que había en stock. Corrige el inventario real (a mano, o editando la venta desde Facturas) y después marcá cada una como resuelta."
-            : "Se cobraron con más cantidad de un producto de la que había en stock. Contá acá qué pasó — un admin va a revisar y corregir el inventario."}
+            ? "Se cobraron con más cantidad de un producto de la que había en stock. Corrige el inventario real (a mano, o editando la venta desde Facturas) y después marca cada una como resuelta."
+            : "Se cobraron con más cantidad de un producto de la que había en stock. Deja el detalle de qué pasó — un admin va a revisar y corregir el inventario."}
         </p>
         {mensaje && <p className="error">{mensaje}</p>}
         {items.length === 0 ? (

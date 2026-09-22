@@ -328,7 +328,7 @@ export default function CuadreCaja({ config, visible }: { config: ConfigRow; vis
       <div className="card">
         {!esHoy && (
           <p className="hint" style={{ marginTop: 0 }}>
-            🔒 Este cierre ya pasó — solo se puede ver, no editar. Volvé a la fecha de hoy para cargar
+            🔒 Este cierre ya pasó — solo se puede ver, no editar. Vuelve a la fecha de hoy para cargar
             el conteo del día.
           </p>
         )}

@@ -72,7 +72,7 @@ export default function App() {
   // por qué no se abrió nada nuevo.
   useEffect(() => {
     const unlistenPromise = listen("instancia-duplicada", () => {
-      alert("Kaxa ya está abierto en este equipo — revisá la ventana que ya está abierta.");
+      alert("Kaxa ya está abierto en este equipo — revisa la ventana que ya está abierta.");
     });
     return () => {
       unlistenPromise.then((unlisten) => unlisten());

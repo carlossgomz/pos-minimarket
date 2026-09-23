@@ -1211,7 +1211,7 @@ export default function Venta({
             notificaciones).
           </p>
         )}
-        <img src={logo} alt={config.nombre_negocio} className="ticket-logo" />
+        <img src={config.logo_base64 ?? logo} alt={config.nombre_negocio} className="ticket-logo" />
         <p className="ticket-meta">
           Ticket {recibo.numero} — {formatearFechaHora(recibo.fechaHora)}
           <br />

@@ -179,7 +179,7 @@ export default function App() {
     try {
       const db = await getDb();
       const rows = await db.select<ConfigRow[]>(
-        "SELECT tasa_cambio_dia, nombre_negocio, rif_negocio, prefijo_caja, proximo_numero_ticket, vendedor_actual_id, gemini_api_key, delivery_api_url FROM config WHERE id = 1"
+        "SELECT tasa_cambio_dia, nombre_negocio, rif_negocio, prefijo_caja, proximo_numero_ticket, vendedor_actual_id, gemini_api_key, delivery_api_url, logo_base64 FROM config WHERE id = 1"
       );
       setConfig(rows[0] ?? null);
     } catch (e) {
@@ -607,7 +607,7 @@ export default function App() {
   return (
     <div className="page">
       <header className="header">
-        <img src={logo} alt={config.nombre_negocio} className="logo-header" />
+        <img src={config.logo_base64 ?? logo} alt={config.nombre_negocio} className="logo-header" />
         <div className="tasa">
           <label>Vendedor</label>
           {!mostrarNuevoVendedor ? (

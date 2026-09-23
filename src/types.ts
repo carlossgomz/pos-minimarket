@@ -44,6 +44,7 @@ export type ConfigRow = {
   vendedor_actual_id: string | null;
   gemini_api_key: string | null;
   delivery_api_url: string | null;
+  logo_base64: string | null;
 };
 
 export type Vendedor = {

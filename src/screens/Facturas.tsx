@@ -313,7 +313,7 @@ export default function Facturas({
         ) : (
           <div className="ticket">
             <h2>Factura {seleccionada.numero_ticket}</h2>
-            <img src={logo} alt={config.nombre_negocio} className="ticket-logo" />
+            <img src={config.logo_base64 ?? logo} alt={config.nombre_negocio} className="ticket-logo" />
             <p className="ticket-meta">
               {seleccionada.estado === "CREDITO_PAGADO" && seleccionada.fecha_ultimo_pago ? (
                 <>

@@ -127,14 +127,23 @@ pub async fn estado_conexion(
     Ok(EstadoConexion { en_linea, pendientes })
 }
 
-/// Arranca la tarea de fondo que, cada ~5s, reproduce la cola pendiente y
+/// Arranca la tarea de fondo que, cada ~60s, reproduce la cola pendiente y
 /// refresca la caché de lectura si hay conexión. Se llama una sola vez
-/// desde `.setup()` en lib.rs. Antes eran 20s — se acortó porque ahora los
-/// buscadores en vivo (ver db_select_cache) leen de esta caché para
-/// sentirse instantáneos, así que le conviene quedar más al día.
+/// desde `.setup()` en lib.rs.
+///
+/// OJO: refrescar_cache() hace "SELECT * FROM tabla" completo en cada
+/// ciclo, para las 7 tablas de TABLAS_CACHEADAS — no es incremental. A 5s
+/// (el valor que tenía esto antes) eso agota el cupo de lecturas mensual
+/// de Turso en cuestión de días apenas las tablas (sobre todo
+/// lotes_producto y clientes, que solo crecen) tienen algunos miles de
+/// filas — es justo lo que le pasó a la base de producción de Day Express
+/// el 2026-09-23. 60s todavía deja los buscadores en vivo razonablemente
+/// al día; si hace falta más viveza sin quemar cupo, lo que corresponde
+/// es hacer refrescar_cache() incremental (WHERE actualizado_en > última
+/// vez) en vez de bajar este número de nuevo.
 pub fn arrancar_tarea_sincronizacion(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
-        let mut intervalo = tokio::time::interval(std::time::Duration::from_secs(5));
+        let mut intervalo = tokio::time::interval(std::time::Duration::from_secs(60));
         loop {
             intervalo.tick().await;
             sincronizar_una_vez(&app).await;

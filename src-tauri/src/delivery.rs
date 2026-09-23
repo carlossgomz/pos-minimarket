@@ -47,12 +47,13 @@ struct ConfigDelivery {
     api_url: String,
     token: String,
     sync_automatico: bool,
+    tasa_cambio_dia: f64,
 }
 
 async fn leer_config_delivery(conn: &libsql::Connection) -> Option<ConfigDelivery> {
     let mut filas = conn
         .query(
-            "SELECT delivery_api_url, delivery_sync_token, delivery_sync_automatico FROM config WHERE id = 1",
+            "SELECT delivery_api_url, delivery_sync_token, delivery_sync_automatico, tasa_cambio_dia FROM config WHERE id = 1",
             (),
         )
         .await
@@ -61,6 +62,7 @@ async fn leer_config_delivery(conn: &libsql::Connection) -> Option<ConfigDeliver
     let api_url: Option<String> = fila.get(0).ok()?;
     let token: Option<String> = fila.get(1).ok()?;
     let sync_automatico: i64 = fila.get(2).ok()?;
+    let tasa_cambio_dia: f64 = fila.get(3).ok()?;
     let api_url = api_url.filter(|s| !s.trim().is_empty())?;
     let token = token.filter(|s| !s.trim().is_empty())?;
     // Sin barra final, para poder concatenar "{api_url}/api/pos/..." sin dobles barras.
@@ -68,7 +70,30 @@ async fn leer_config_delivery(conn: &libsql::Connection) -> Option<ConfigDeliver
         api_url: api_url.trim_end_matches('/').to_string(),
         token,
         sync_automatico: sync_automatico != 0,
+        tasa_cambio_dia,
     })
+}
+
+/// Empuja la tasa del día a la delivery-app — se llama desde el mismo
+/// ciclo de 5s que ya revisa pedidos (ver arrancar_tareas), así que un
+/// cambio de tasa en el POS tarda como mucho unos segundos en verse
+/// reflejado ahí, en vez de esperar los 5 minutos del sync de catálogo.
+/// Sin esto, el dueño tenía que cambiarla a mano en los dos lados por
+/// separado, y podían quedar desincronizadas.
+async fn empujar_tasa(cliente: &reqwest::Client, cfg: &ConfigDelivery) {
+    let resultado = cliente
+        .post(format!("{}/api/pos/tasa", cfg.api_url))
+        .bearer_auth(&cfg.token)
+        .json(&serde_json::json!({ "tasaCambio": cfg.tasa_cambio_dia }))
+        .send()
+        .await;
+    match resultado {
+        Ok(r) if !r.status().is_success() => {
+            eprintln!("Delivery: la app de delivery rechazó la tasa ({}): {}", r.status(), r.text().await.unwrap_or_default());
+        }
+        Err(e) => eprintln!("Delivery: no se pudo empujar la tasa: {e}"),
+        _ => {}
+    }
 }
 
 /// Mismo cálculo que precioVentaUsd en src/precios.ts — margen bruto sobre
@@ -431,6 +456,7 @@ pub fn arrancar_tareas(app: tauri::AppHandle) {
             let estado_pedidos = app.state::<EstadoPedidosDelivery>();
             revisar_pendientes(&cliente, &cfg, &estado_pedidos).await;
             revisar_entregados(&cliente, &cfg, &conn).await;
+            empujar_tasa(&cliente, &cfg).await;
         }
     });
 }

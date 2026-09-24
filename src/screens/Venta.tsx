@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getDb } from "../db";
@@ -2167,27 +2168,36 @@ export default function Venta({
         </div>
       )}
 
-      {confirmarCierreVentana && (
-        <div className="modal-fondo" onMouseDown={() => setConfirmarCierreVentana(false)}>
-          <div className="modal-caja" onMouseDown={(e) => e.stopPropagation()}>
-            <h2>¿Cerrar el programa?</h2>
-            <p className="hint">
-              Hay tickets abiertos o consumo interno sin guardar — se van a perder si cerrás ahora.
-            </p>
-            <div className="form-row">
-              <button
-                className="link-btn link-btn-danger"
-                onClick={() => getCurrentWindow().destroy()}
-              >
-                Cerrar de todas formas
-              </button>
-              <button className="cobrar-btn" onClick={() => setConfirmarCierreVentana(false)}>
-                Cancelar, quiero revisar
-              </button>
+      {confirmarCierreVentana &&
+        createPortal(
+          // Portal a document.body: Venta se renderiza dentro de un <div
+          // display:none> cuando el cajero está en otra pestaña (ver
+          // App.tsx), pero el aviso de cierre tiene que verse SIEMPRE, sin
+          // importar en qué pestaña esté parado al presionar la X - si se
+          // queda anidado ahí adentro, el cierre se bloquea igual (el
+          // listener sigue activo) pero el aviso queda invisible, y el
+          // programa "no cierra" sin ninguna explicación.
+          <div className="modal-fondo" onMouseDown={() => setConfirmarCierreVentana(false)}>
+            <div className="modal-caja" onMouseDown={(e) => e.stopPropagation()}>
+              <h2>¿Cerrar el programa?</h2>
+              <p className="hint">
+                Hay tickets abiertos o consumo interno sin guardar — se van a perder si cerrás ahora.
+              </p>
+              <div className="form-row">
+                <button
+                  className="link-btn link-btn-danger"
+                  onClick={() => getCurrentWindow().destroy()}
+                >
+                  Cerrar de todas formas
+                </button>
+                <button className="cobrar-btn" onClick={() => setConfirmarCierreVentana(false)}>
+                  Cancelar, quiero revisar
+                </button>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
     </div>
   );
 }

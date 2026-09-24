@@ -502,6 +502,12 @@ function CuentasPorPagar({ config }: { config: ConfigRow }) {
       return;
     }
 
+    const nombreProveedor = proveedores.find((p) => p.proveedor_id === proveedorAbierto)?.proveedor_nombre ?? "este proveedor";
+    const montoTexto = monedaMetodo === "USD" ? `$${montoEscrito.toFixed(2)}` : `Bs ${montoEscrito.toFixed(2)}`;
+    if (!window.confirm(`¿Registrar el abono de ${montoTexto} a ${nombreProveedor} (factura ${facturaAbono.numero_factura})?`)) {
+      return;
+    }
+
     try {
       // Misma corrección que en el abono de clientes: transacción real
       // en Rust en vez de BEGIN/COMMIT sueltos desde el frontend.
@@ -680,7 +686,10 @@ function CuentasPorPagar({ config }: { config: ConfigRow }) {
 
       {facturaAbono && (
         <div className="card" style={{ marginTop: 16 }}>
-          <h2>Pago a factura {facturaAbono.numero_factura}</h2>
+          <h2>
+            Pago a {proveedores.find((p) => p.proveedor_id === proveedorAbierto)?.proveedor_nombre ?? "proveedor"} (factura{" "}
+            {facturaAbono.numero_factura})
+          </h2>
           <p className="hint">
             Saldo pendiente: USD {(facturaAbono.monto_total_usd - facturaAbono.monto_pagado_usd).toFixed(2)}.
             Ingresa cuánto pagas hoy y a qué tasa.

@@ -1027,7 +1027,7 @@ export default function Compras({
         </p>
 
         <div style={{ position: "relative", maxWidth: 420, marginTop: 12 }}>
-          <Campo label="Código del proveedor (opcional)">
+          <Campo label="Buscar producto">
             <input
               value={codigoBusqueda}
               onChange={(e) => {

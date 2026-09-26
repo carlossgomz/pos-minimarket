@@ -26,6 +26,7 @@ import ActualizacionDisponible from "./screens/ActualizacionDisponible";
 import Notificaciones, { NotificacionItem } from "./screens/Notificaciones";
 import PendientesCodigoBarras from "./screens/PendientesCodigoBarras";
 import StockPendiente from "./screens/StockPendiente";
+import AcercaDe from "./screens/AcercaDe";
 import logo from "./assets/logo.png";
 
 type Tab =
@@ -40,13 +41,14 @@ type Tab =
   | "reportes"
   | "estadisticas"
   | "facturas"
-  | "usuarios";
+  | "usuarios"
+  | "acerca";
 
 // El cajero solo ve estas secciones — compras, proveedores, reportes y
 // usuarios siguen siendo solo para admin. Se filtra acá, en el frontend,
 // no hay bases de datos separadas: es el mismo archivo .db para los dos
 // roles.
-const SECCIONES_CAJERO = new Set<Tab>(["venta", "facturas", "clientes", "cuentas", "inventario", "cuadre"]);
+const SECCIONES_CAJERO = new Set<Tab>(["venta", "facturas", "clientes", "cuentas", "inventario", "cuadre", "acerca"]);
 
 // Tema claro/oscuro — se guarda en localStorage (por PC, no por usuario:
 // no tiene sentido que cambie de tema al cerrar sesión). Por defecto queda
@@ -538,6 +540,7 @@ export default function App() {
     { key: "reportes", label: "Reportes" },
     { key: "estadisticas", label: "Estadísticas" },
     { key: "usuarios", label: "Usuarios" },
+    { key: "acerca", label: "Acerca de" },
   ];
   const pestanasVisibles = esAdmin
     ? TODAS_LAS_PESTANAS
@@ -756,6 +759,7 @@ export default function App() {
         </div>
       )}
       {esAdmin && tabEfectivo === "usuarios" && <Usuarios usuarioActual={usuarioActual} />}
+      {tabEfectivo === "acerca" && <AcercaDe />}
       {esAdmin && tabEfectivo === "reportes" && <Reportes config={config} />}
       {esAdmin && tabEfectivo === "estadisticas" && <Estadisticas config={config} />}
       <div style={{ display: tabEfectivo === "facturas" ? "block" : "none" }}>

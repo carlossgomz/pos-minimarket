@@ -143,6 +143,7 @@ const MIGRACIONES: &[(i64, &str, &str)] = &[
     (28, "logo del negocio", include_str!("../migrations/0028_config_logo.sql")),
     (29, "indice ventas fecha", include_str!("../migrations/0029_indice_ventas_fecha.sql")),
     (30, "producto ignora stock", include_str!("../migrations/0030_producto_ignora_stock.sql")),
+    (31, "direccion y telefono del negocio", include_str!("../migrations/0031_direccion_telefono_negocio.sql")),
 ];
 
 pub async fn ejecutar_migraciones(conn: &libsql::Connection) -> anyhow::Result<()> {

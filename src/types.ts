@@ -40,6 +40,8 @@ export type ConfigRow = {
   tasa_cambio_dia: number;
   nombre_negocio: string;
   rif_negocio: string | null;
+  direccion_negocio: string | null;
+  telefono_negocio: string | null;
   prefijo_caja: string;
   proximo_numero_ticket: number;
   vendedor_actual_id: string | null;

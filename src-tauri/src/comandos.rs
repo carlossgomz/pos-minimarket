@@ -360,17 +360,20 @@ pub(crate) async fn confirmar_venta_interna(
         // verdad, así que la diferencia real (cuánto se vendió de más)
         // queda documentada acá, en stock_disponible_al_vender, no en el
         // número de stock.
-        let stock_antes: f64 = tx
-            .query("SELECT stock_actual FROM productos WHERE id = ?1", libsql::params![item.producto_id.clone()])
+        let fila_producto = tx
+            .query("SELECT stock_actual, ignora_stock FROM productos WHERE id = ?1", libsql::params![item.producto_id.clone()])
             .await
             .map_err(|e| e.to_string())?
             .next()
             .await
             .map_err(|e| e.to_string())?
-            .ok_or_else(|| "Un producto del carrito ya no existe.".to_string())?
-            .get(0)
-            .map_err(|e| e.to_string())?;
-        let stock_insuficiente = item.cantidad > stock_antes;
+            .ok_or_else(|| "Un producto del carrito ya no existe.".to_string())?;
+        let stock_antes: f64 = fila_producto.get(0).map_err(|e| e.to_string())?;
+        let ignora_stock: i64 = fila_producto.get(1).map_err(|e| e.to_string())?;
+        // Productos que no son inventario real (ej. "DELIVERY", un cargo de
+        // servicio, siempre en stock 0 a propósito) nunca quedan marcados
+        // como "stock por revisar" - ver migración 0030.
+        let stock_insuficiente = ignora_stock == 0 && item.cantidad > stock_antes;
         let stock_disponible_al_vender: Option<f64> = stock_insuficiente.then_some(stock_antes);
 
         tx.execute(

@@ -18,6 +18,7 @@ export type Producto = {
   activo: number; // 0/1
   disponible_delivery: number; // 0/1 — si se ofrece o no en la app de delivery
   por_peso: number; // 0/1 — se vende por peso (kg), no por unidad
+  ignora_stock: number; // 0/1 — producto de servicio (ej. delivery), nunca marca "stock por revisar"
 };
 
 export type ProductoInventario = Producto & {

@@ -277,6 +277,15 @@ export default function Inventario({
     await cargar();
   }
 
+  // Para productos de servicio (ej. "DELIVERY") que se venden siempre a
+  // stock 0 a propósito - sin esto, cada venta queda marcada "stock por
+  // revisar" para un admin aunque no sea un error real.
+  async function actualizarIgnoraStock(p: ProductoInventario, ignora: boolean) {
+    const db = await getDb();
+    await db.execute("UPDATE productos SET ignora_stock = $1 WHERE id = $2", [ignora ? 1 : 0, p.id]);
+    await cargar();
+  }
+
   const [sincronizandoDelivery, setSincronizandoDelivery] = useState(false);
 
   async function sincronizarDelivery() {
@@ -568,6 +577,14 @@ export default function Inventario({
                             activar
                           </button>
                         )}
+                        <button
+                          type="button"
+                          className="link-btn"
+                          title="Producto de servicio (ej. delivery) - no marca 'stock por revisar' aunque se venda a stock 0"
+                          onClick={() => actualizarIgnoraStock(p, !p.ignora_stock)}
+                        >
+                          {p.ignora_stock ? "sí rastrea stock" : "no rastrear stock"}
+                        </button>
                         <button
                           type="button"
                           className="link-btn link-btn-danger"

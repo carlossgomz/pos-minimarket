@@ -193,6 +193,11 @@ function CuentasPorCobrar({ config, esAdmin }: { config: ConfigRow; esAdmin: boo
       return;
     }
 
+    const montoTexto = monedaMetodo === "USD" ? `$${montoEscrito.toFixed(2)}` : `Bs ${montoEscrito.toFixed(2)}`;
+    if (!window.confirm(`¿Registrar el abono de ${montoTexto} a ${clienteAbono.cliente_nombre}?`)) {
+      return;
+    }
+
     try {
       // Se guarda en una sola transacción real en Rust (ver
       // src-tauri/src/comandos.rs) — el mismo problema que tenían las

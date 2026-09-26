@@ -177,7 +177,11 @@ export default function App() {
     setNovedades(null);
   }
 
-  async function cargarConfig() {
+  // silencioso=true para el refresco periódico de más abajo: si Turso
+  // falla un segundo por lo que sea, no tiene sentido tumbar toda la
+  // pantalla con la de "Error al cargar la configuración" en medio de una
+  // venta — simplemente se reintenta en el próximo ciclo.
+  async function cargarConfig(silencioso = false) {
     try {
       const db = await getDb();
       const rows = await db.select<ConfigRow[]>(
@@ -185,11 +189,23 @@ export default function App() {
       );
       setConfig(rows[0] ?? null);
     } catch (e) {
-      setError(String(e));
+      if (!silencioso) setError(String(e));
     } finally {
-      setCargando(false);
+      if (!silencioso) setCargando(false);
     }
   }
+
+  // La tasa del día (y el resto de config) se guarda en una sola fila
+  // compartida por todas las PCs de la tienda — sin esto, una PC que ya
+  // estaba abierta cuando otra cambió la tasa se quedaba vendiendo con la
+  // tasa vieja hasta que alguien reiniciara el programa (pasó de verdad:
+  // ventas registradas con una tasa desactualizada). Cada 20s, igual que
+  // el resto de los avisos de fondo de esta pantalla.
+  useEffect(() => {
+    if (!configSyncLista) return;
+    const id = setInterval(() => cargarConfig(true), 20_000);
+    return () => clearInterval(id);
+  }, [configSyncLista]);
 
   async function cargarVendedores() {
     const db = await getDb();

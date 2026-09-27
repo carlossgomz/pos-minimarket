@@ -22,11 +22,6 @@ function primerDiaMes(offsetMeses = 0) {
 
 const INICIO_HISTORICO = "2020-01-01";
 
-// Producto "placeholder" del recargo de delivery (código de barra 1111111,
-// legado de antes de la integración) — no es un producto real, así que se
-// excluye de todos los rankings de Estadísticas.
-const PRODUCTO_DELIVERY_ID = "f195fbac-103d-48fa-a27a-28371fba7745";
-
 type ProductoTop = { producto_id: string; nombre: string; cantidad: number; monto_bs: number };
 type ProductoGanancia = { producto_id: string; nombre: string; ganancia_bs: number };
 type ClienteFrecuente = { cliente_id: string; nombre: string; num_compras: number; total_gastado_bs: number };
@@ -69,11 +64,11 @@ export default function Estadisticas({ config }: { config: ConfigRow }) {
            FROM venta_items vi
            JOIN ventas v ON v.id = vi.venta_id
            JOIN productos p ON p.id = vi.producto_id
-           WHERE date(v.fecha_hora) BETWEEN $1 AND $2 AND p.id <> $3
+           WHERE date(v.fecha_hora) BETWEEN $1 AND $2 AND p.uso_interno = 0
            GROUP BY vi.producto_id
            ORDER BY cantidad DESC
            LIMIT 10`,
-          [desde, hasta, PRODUCTO_DELIVERY_ID]
+          [desde, hasta]
         )
       );
 
@@ -84,11 +79,11 @@ export default function Estadisticas({ config }: { config: ConfigRow }) {
            FROM venta_items vi
            JOIN ventas v ON v.id = vi.venta_id
            JOIN productos p ON p.id = vi.producto_id
-           WHERE date(v.fecha_hora) BETWEEN $1 AND $2 AND p.id <> $3
+           WHERE date(v.fecha_hora) BETWEEN $1 AND $2 AND p.uso_interno = 0
            GROUP BY vi.producto_id
            ORDER BY ganancia_bs DESC
            LIMIT 10`,
-          [desde, hasta, PRODUCTO_DELIVERY_ID]
+          [desde, hasta]
         )
       );
 
@@ -123,11 +118,11 @@ export default function Estadisticas({ config }: { config: ConfigRow }) {
            JOIN ventas v ON v.id = vi.venta_id
            JOIN productos p ON p.id = vi.producto_id
            LEFT JOIN categorias c ON c.id = p.categoria_id
-           WHERE date(v.fecha_hora) BETWEEN $1 AND $2 AND p.id <> $3
+           WHERE date(v.fecha_hora) BETWEEN $1 AND $2 AND p.uso_interno = 0
            GROUP BY categoria
            ORDER BY monto_bs DESC
            LIMIT 5`,
-          [desde, hasta, PRODUCTO_DELIVERY_ID]
+          [desde, hasta]
         )
       );
 

@@ -433,7 +433,7 @@ export default function Venta({
     const timer = setTimeout(async () => {
       const db = await getDb();
       const rows = await db.selectRapido<Producto[]>(
-        `SELECT * FROM productos WHERE activo = 1 AND (${sqlSinAcentos("nombre")} LIKE $1 OR codigo_barra LIKE $2) ORDER BY nombre LIMIT 8`,
+        `SELECT * FROM productos WHERE activo = 1 AND uso_interno = 0 AND (${sqlSinAcentos("nombre")} LIKE $1 OR codigo_barra LIKE $2) ORDER BY nombre LIMIT 8`,
         [`%${normalizarTexto(term)}%`, `%${term}%`]
       );
       setResultados(rows);
@@ -850,7 +850,7 @@ export default function Venta({
 
     const db = await getDb();
     const rows = await db.selectRapido<Producto[]>(
-      "SELECT * FROM productos WHERE codigo_barra = $1 AND activo = 1",
+      "SELECT * FROM productos WHERE codigo_barra = $1 AND activo = 1 AND uso_interno = 0",
       [codigo]
     );
 

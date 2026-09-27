@@ -286,6 +286,17 @@ export default function Inventario({
     await cargar();
   }
 
+  // Para productos que existen solo para registrar una compra (ej. "pollo
+  // entero" que después se despresa en muslos/alas/pechugas) — nunca se
+  // venden directo, así que se ocultan del buscador de Venta y de todos
+  // los rankings de Estadísticas/Reportes. Sigue sirviendo para Compras,
+  // Movimientos y Desglosar producto.
+  async function actualizarUsoInterno(p: ProductoInventario, usoInterno: boolean) {
+    const db = await getDb();
+    await db.execute("UPDATE productos SET uso_interno = $1 WHERE id = $2", [usoInterno ? 1 : 0, p.id]);
+    await cargar();
+  }
+
   const [sincronizandoDelivery, setSincronizandoDelivery] = useState(false);
 
   async function sincronizarDelivery() {
@@ -584,6 +595,14 @@ export default function Inventario({
                           onClick={() => actualizarIgnoraStock(p, !p.ignora_stock)}
                         >
                           {p.ignora_stock ? "sí rastrea stock" : "no rastrear stock"}
+                        </button>
+                        <button
+                          type="button"
+                          className="link-btn"
+                          title="Producto que solo sirve para registrar una compra (ej. materia prima) - se oculta de Venta y de Estadísticas/Reportes"
+                          onClick={() => actualizarUsoInterno(p, !p.uso_interno)}
+                        >
+                          {p.uso_interno ? "producto normal" : "uso interno"}
                         </button>
                         <button
                           type="button"

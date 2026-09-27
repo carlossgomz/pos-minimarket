@@ -19,6 +19,7 @@ export type Producto = {
   disponible_delivery: number; // 0/1 — si se ofrece o no en la app de delivery
   por_peso: number; // 0/1 — se vende por peso (kg), no por unidad
   ignora_stock: number; // 0/1 — producto de servicio (ej. delivery), nunca marca "stock por revisar"
+  uso_interno: number; // 0/1 - solo para registrar compra (ej. materia prima que se desglosa), nunca se vende directo ni cuenta en estadisticas
 };
 
 export type ProductoInventario = Producto & {

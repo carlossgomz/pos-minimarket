@@ -805,7 +805,61 @@ export default function Venta({
     setMostrarClienteNuevo(false);
   }
 
-  function agregarAlCarrito(p: Producto) {
+  // Atajo de "abrir paquete" — cuando un producto vinculado a un padre (ej.
+  // "CIGARRO DETALLADO" -> "CIGARRO CAJA") no tiene stock suelto, se ofrece
+  // desglosar 1 paquete ahí mismo en vez de mandar al cajero a Movimientos
+  // (que además es solo para admin). Usa el mismo comando Rust que ya
+  // usa Movimientos.tsx, atómico y con FIFO de costos.
+  const [propuestaApertura, setPropuestaApertura] = useState<{
+    producto: Producto;
+    padre: { id: string; nombre: string; stock_actual: number; unidades_por_paquete: number };
+  } | null>(null);
+  const [abriendoPaquete, setAbriendoPaquete] = useState(false);
+
+  async function agregarAlCarrito(p: Producto) {
+    if (p.stock_actual <= 0 && p.producto_padre_id) {
+      const db = await getDb();
+      const [padre] = await db.select<{ id: string; nombre: string; stock_actual: number; unidades_por_paquete: number }[]>(
+        "SELECT id, nombre, stock_actual, unidades_por_paquete FROM productos WHERE id = $1",
+        [p.producto_padre_id]
+      );
+      if (padre && padre.stock_actual >= 1) {
+        setPropuestaApertura({ producto: p, padre });
+        return;
+      }
+    }
+    agregarAlCarritoConfirmado(p);
+  }
+
+  async function confirmarApertura() {
+    if (!propuestaApertura) return;
+    const { producto, padre } = propuestaApertura;
+    setAbriendoPaquete(true);
+    try {
+      await invoke("desglosar_producto", {
+        input: {
+          id: crypto.randomUUID(),
+          producto_origen_id: padre.id,
+          producto_destino_id: producto.id,
+          cantidad_origen: 1,
+          unidades_generadas: padre.unidades_por_paquete || 1,
+          motivo: "Apertura automática desde Venta",
+          fecha_hora: fechaHoraVenezuela(),
+        },
+      });
+      const db = await getDb();
+      const [actualizado] = await db.select<Producto[]>("SELECT * FROM productos WHERE id = $1", [producto.id]);
+      setPropuestaApertura(null);
+      if (actualizado) agregarAlCarritoConfirmado(actualizado);
+    } catch (e) {
+      setMensaje(`No se pudo abrir el paquete: ${String(e)}`);
+      setPropuestaApertura(null);
+    } finally {
+      setAbriendoPaquete(false);
+    }
+  }
+
+  function agregarAlCarritoConfirmado(p: Producto) {
     const existente = activo.carrito.find((l) => l.producto_id === p.id);
     const nuevoCarrito = existente
       ? activo.carrito.map((l) => (l.producto_id === p.id ? { ...l, cantidad: l.cantidad + 1 } : l))
@@ -2198,6 +2252,30 @@ export default function Venta({
           </div>,
           document.body
         )}
+
+      {propuestaApertura && (
+        <div className="modal-fondo" onMouseDown={() => setPropuestaApertura(null)}>
+          <div className="modal-caja" onMouseDown={(e) => e.stopPropagation()}>
+            <h2>Sin stock suelto</h2>
+            <p className="hint">
+              "{propuestaApertura.producto.nombre}" no tiene stock, pero hay {formatearStock(propuestaApertura.padre.stock_actual)} de "
+              {propuestaApertura.padre.nombre}" disponibles.
+            </p>
+            <p>
+              ¿Abrir 1 "{propuestaApertura.padre.nombre}" para generar {propuestaApertura.padre.unidades_por_paquete} unidades de "
+              {propuestaApertura.producto.nombre}"?
+            </p>
+            <div className="form-row">
+              <button className="link-btn" onClick={() => setPropuestaApertura(null)} disabled={abriendoPaquete}>
+                cancelar
+              </button>
+              <button className="cobrar-btn" onClick={confirmarApertura} disabled={abriendoPaquete}>
+                {abriendoPaquete ? "Abriendo…" : "Abrir paquete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

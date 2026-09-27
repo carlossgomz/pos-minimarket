@@ -20,6 +20,7 @@ export type Producto = {
   por_peso: number; // 0/1 — se vende por peso (kg), no por unidad
   ignora_stock: number; // 0/1 — producto de servicio (ej. delivery), nunca marca "stock por revisar"
   uso_interno: number; // 0/1 - solo para registrar compra (ej. materia prima que se desglosa), nunca se vende directo ni cuenta en estadisticas
+  producto_padre_id: string | null; // producto "paquete" del que sale este (ej. CIGARRO DETALLADO -> CIGARRO CAJA), para el atajo de abrir paquete en Venta
 };
 
 export type ProductoInventario = Producto & {

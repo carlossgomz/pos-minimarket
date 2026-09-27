@@ -297,6 +297,73 @@ export default function Inventario({
     await cargar();
   }
 
+  // Vincula un producto "suelto" (ej. "CIGARRO DETALLADO") con el
+  // "paquete" del que sale (ej. "CIGARRO CAJA") — así Venta puede ofrecer
+  // abrir 1 paquete con un clic cuando el suelto se queda sin stock, en
+  // vez de mandar al cajero a Movimientos. Un solo campo de búsqueda
+  // abierto a la vez (vinculandoPadreId marca cuál fila).
+  const [vinculandoPadreId, setVinculandoPadreId] = useState<string | null>(null);
+  const [busquedaPadre, setBusquedaPadre] = useState("");
+  const [resultadosPadre, setResultadosPadre] = useState<ProductoInventario[]>([]);
+  const [nombresPadre, setNombresPadre] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const term = busquedaPadre.trim();
+    if (term.length < 2 || !vinculandoPadreId) {
+      setResultadosPadre([]);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      const db = await getDb();
+      const rows = await db.select<ProductoInventario[]>(
+        `SELECT * FROM productos WHERE activo = 1 AND id != $3 AND (${sqlSinAcentos("nombre")} LIKE $1 OR codigo_barra LIKE $2) ORDER BY nombre LIMIT 8`,
+        [`%${normalizarTexto(term)}%`, `%${term}%`, vinculandoPadreId]
+      );
+      setResultadosPadre(rows);
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [busquedaPadre, vinculandoPadreId]);
+
+  async function vincularPadre(p: ProductoInventario, padre: ProductoInventario) {
+    const db = await getDb();
+    await db.execute("UPDATE productos SET producto_padre_id = $1 WHERE id = $2", [padre.id, p.id]);
+    setVinculandoPadreId(null);
+    setBusquedaPadre("");
+    setResultadosPadre([]);
+    setNombresPadre((prev) => ({ ...prev, [p.id]: padre.nombre }));
+    await cargar();
+  }
+
+  async function quitarPadre(p: ProductoInventario) {
+    const db = await getDb();
+    await db.execute("UPDATE productos SET producto_padre_id = NULL WHERE id = $1", [p.id]);
+    await cargar();
+  }
+
+  // Nombres de los productos padre ya vinculados, para mostrar el nombre
+  // en vez del id crudo — se resuelven aparte porque la lista principal de
+  // productos (paginada/filtrada) puede no incluir la fila del padre.
+  useEffect(() => {
+    const idsPendientes = Array.from(
+      new Set(productos.map((p) => p.producto_padre_id).filter((id): id is string => !!id && !(id in nombresPadre)))
+    );
+    if (idsPendientes.length === 0) return;
+    (async () => {
+      const db = await getDb();
+      const placeholders = idsPendientes.map((_, i) => `$${i + 1}`).join(",");
+      const rows = await db.select<{ id: string; nombre: string }[]>(
+        `SELECT id, nombre FROM productos WHERE id IN (${placeholders})`,
+        idsPendientes
+      );
+      setNombresPadre((prev) => {
+        const siguiente = { ...prev };
+        for (const r of rows) siguiente[r.id] = r.nombre;
+        return siguiente;
+      });
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productos]);
+
   const [sincronizandoDelivery, setSincronizandoDelivery] = useState(false);
 
   async function sincronizarDelivery() {
@@ -604,6 +671,65 @@ export default function Inventario({
                         >
                           {p.uso_interno ? "producto normal" : "uso interno"}
                         </button>
+                        <span style={{ position: "relative", display: "inline-block" }}>
+                          {vinculandoPadreId === p.id ? (
+                            <>
+                              <input
+                                autoFocus
+                                className="cant-input"
+                                style={{ width: 140 }}
+                                placeholder="Buscar paquete..."
+                                value={busquedaPadre}
+                                onChange={(e) => setBusquedaPadre(e.target.value)}
+                                onBlur={() => setTimeout(() => setVinculandoPadreId(null), 150)}
+                              />
+                              {resultadosPadre.length > 0 && (
+                                <ul
+                                  style={{
+                                    position: "absolute",
+                                    top: "calc(100% + 4px)",
+                                    left: 0,
+                                    background: "var(--bg-card)",
+                                    border: "1px solid var(--border)",
+                                    borderRadius: 8,
+                                    listStyle: "none",
+                                    margin: 0,
+                                    padding: 4,
+                                    zIndex: 10,
+                                    minWidth: 200,
+                                    boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+                                  }}
+                                >
+                                  {resultadosPadre.map((padre) => (
+                                    <li
+                                      key={padre.id}
+                                      onMouseDown={() => vincularPadre(p, padre)}
+                                      style={{ padding: "6px 8px", cursor: "pointer", borderRadius: 6, fontSize: 13 }}
+                                    >
+                                      {padre.nombre}
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </>
+                          ) : p.producto_padre_id ? (
+                            <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                              de: {nombresPadre[p.producto_padre_id] ?? "…"}{" "}
+                              <button type="button" className="link-btn" onClick={() => quitarPadre(p)}>
+                                quitar
+                              </button>
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              className="link-btn"
+                              title="Vincular con el producto 'paquete' del que sale este (ej. CIGARRO DETALLADO viene de CIGARRO CAJA) — permite abrir un paquete con un clic desde Venta si este se queda sin stock"
+                              onClick={() => setVinculandoPadreId(p.id)}
+                            >
+                              vincular paquete
+                            </button>
+                          )}
+                        </span>
                         <button
                           type="button"
                           className="link-btn link-btn-danger"

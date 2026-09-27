@@ -1,10 +1,101 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getDb } from "../db";
 import { Categoria, ConfigRow, ProductoInventario } from "../types";
 import { estadoStock, formatearStock, gananciaUnitariaUsd, precioVentaBsHoy, precioVentaUsd } from "../precios";
 import { fechaHoraVenezuela } from "../fecha";
 import { normalizarTexto, sqlSinAcentos } from "../busqueda";
+
+// Menú "⋮" para las acciones menos usadas de cada producto — antes eran 4
+// botones de texto apilados en la celda (uno por línea, ver "no rastrear
+// stock" / "uso interno" / "vincular paquete" / "eliminar"), lo que
+// volvía cada fila de la tabla altísima. Un solo menú desplegable, cerrado
+// por defecto, mantiene la tabla compacta.
+function MenuAcciones({
+  producto,
+  nombrePadre,
+  onNoRastrearStock,
+  onUsoInterno,
+  onVincularPaquete,
+  onQuitarPadre,
+  onEliminar,
+}: {
+  producto: ProductoInventario;
+  nombrePadre: string | undefined;
+  onNoRastrearStock: () => void;
+  onUsoInterno: () => void;
+  onVincularPaquete: () => void;
+  onQuitarPadre: () => void;
+  onEliminar: () => void;
+}) {
+  const [abierto, setAbierto] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!abierto) return;
+    function alHacerClicFuera(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setAbierto(false);
+    }
+    document.addEventListener("mousedown", alHacerClicFuera);
+    return () => document.removeEventListener("mousedown", alHacerClicFuera);
+  }, [abierto]);
+
+  function elegir(accion: () => void) {
+    accion();
+    setAbierto(false);
+  }
+
+  return (
+    <div ref={ref} style={{ position: "relative", display: "inline-block" }}>
+      <button
+        type="button"
+        className="link-btn"
+        title="Más opciones"
+        onClick={() => setAbierto((v) => !v)}
+        style={{ fontSize: 18, lineHeight: 1, padding: "2px 10px" }}
+      >
+        ⋮
+      </button>
+      {abierto && (
+        <div
+          style={{
+            position: "absolute",
+            right: 0,
+            top: "calc(100% + 4px)",
+            background: "var(--bg-card)",
+            border: "1px solid var(--border)",
+            borderRadius: 8,
+            minWidth: 180,
+            zIndex: 20,
+            boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
+            overflow: "hidden",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          <button type="button" className="menu-item" onClick={() => elegir(onNoRastrearStock)}>
+            {producto.ignora_stock ? "sí rastrea stock" : "no rastrear stock"}
+          </button>
+          <button type="button" className="menu-item" onClick={() => elegir(onUsoInterno)}>
+            {producto.uso_interno ? "producto normal" : "uso interno"}
+          </button>
+          {producto.producto_padre_id ? (
+            <button type="button" className="menu-item" onClick={() => elegir(onQuitarPadre)}>
+              quitar vínculo ({nombrePadre ?? "…"})
+            </button>
+          ) : (
+            <button type="button" className="menu-item" onClick={() => elegir(onVincularPaquete)}>
+              vincular paquete
+            </button>
+          )}
+          <button type="button" className="menu-item menu-item-danger" onClick={() => elegir(onEliminar)}>
+            eliminar
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // Solo el total histórico de entradas/salidas, como referencia rápida en
 // el catálogo — sin botones ni edición acá; para registrar un movimiento
@@ -655,88 +746,57 @@ export default function Inventario({
                             activar
                           </button>
                         )}
-                        <button
-                          type="button"
-                          className="link-btn"
-                          title="Producto de servicio (ej. delivery) - no marca 'stock por revisar' aunque se venda a stock 0"
-                          onClick={() => actualizarIgnoraStock(p, !p.ignora_stock)}
-                        >
-                          {p.ignora_stock ? "sí rastrea stock" : "no rastrear stock"}
-                        </button>
-                        <button
-                          type="button"
-                          className="link-btn"
-                          title="Producto que solo sirve para registrar una compra (ej. materia prima) - se oculta de Venta y de Estadísticas/Reportes"
-                          onClick={() => actualizarUsoInterno(p, !p.uso_interno)}
-                        >
-                          {p.uso_interno ? "producto normal" : "uso interno"}
-                        </button>
-                        <span style={{ position: "relative", display: "inline-block" }}>
-                          {vinculandoPadreId === p.id ? (
-                            <>
-                              <input
-                                autoFocus
-                                className="cant-input"
-                                style={{ width: 140 }}
-                                placeholder="Buscar paquete..."
-                                value={busquedaPadre}
-                                onChange={(e) => setBusquedaPadre(e.target.value)}
-                                onBlur={() => setTimeout(() => setVinculandoPadreId(null), 150)}
-                              />
-                              {resultadosPadre.length > 0 && (
-                                <ul
-                                  style={{
-                                    position: "absolute",
-                                    top: "calc(100% + 4px)",
-                                    left: 0,
-                                    background: "var(--bg-card)",
-                                    border: "1px solid var(--border)",
-                                    borderRadius: 8,
-                                    listStyle: "none",
-                                    margin: 0,
-                                    padding: 4,
-                                    zIndex: 10,
-                                    minWidth: 200,
-                                    boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
-                                  }}
-                                >
-                                  {resultadosPadre.map((padre) => (
-                                    <li
-                                      key={padre.id}
-                                      onMouseDown={() => vincularPadre(p, padre)}
-                                      style={{ padding: "6px 8px", cursor: "pointer", borderRadius: 6, fontSize: 13 }}
-                                    >
-                                      {padre.nombre}
-                                    </li>
-                                  ))}
-                                </ul>
-                              )}
-                            </>
-                          ) : p.producto_padre_id ? (
-                            <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-                              de: {nombresPadre[p.producto_padre_id] ?? "…"}{" "}
-                              <button type="button" className="link-btn" onClick={() => quitarPadre(p)}>
-                                quitar
-                              </button>
-                            </span>
-                          ) : (
-                            <button
-                              type="button"
-                              className="link-btn"
-                              title="Vincular con el producto 'paquete' del que sale este (ej. CIGARRO DETALLADO viene de CIGARRO CAJA) — permite abrir un paquete con un clic desde Venta si este se queda sin stock"
-                              onClick={() => setVinculandoPadreId(p.id)}
-                            >
-                              vincular paquete
-                            </button>
-                          )}
-                        </span>
-                        <button
-                          type="button"
-                          className="link-btn link-btn-danger"
-                          onClick={() => eliminarProducto(p)}
-                        >
-                          eliminar
-                        </button>
+                        {vinculandoPadreId === p.id ? (
+                          <span style={{ position: "relative", display: "inline-block" }}>
+                            <input
+                              autoFocus
+                              className="cant-input"
+                              style={{ width: 140 }}
+                              placeholder="Buscar paquete..."
+                              value={busquedaPadre}
+                              onChange={(e) => setBusquedaPadre(e.target.value)}
+                              onBlur={() => setTimeout(() => setVinculandoPadreId(null), 150)}
+                            />
+                            {resultadosPadre.length > 0 && (
+                              <ul
+                                style={{
+                                  position: "absolute",
+                                  top: "calc(100% + 4px)",
+                                  left: 0,
+                                  background: "var(--bg-card)",
+                                  border: "1px solid var(--border)",
+                                  borderRadius: 8,
+                                  listStyle: "none",
+                                  margin: 0,
+                                  padding: 4,
+                                  zIndex: 10,
+                                  minWidth: 200,
+                                  boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+                                }}
+                              >
+                                {resultadosPadre.map((padre) => (
+                                  <li
+                                    key={padre.id}
+                                    onMouseDown={() => vincularPadre(p, padre)}
+                                    style={{ padding: "6px 8px", cursor: "pointer", borderRadius: 6, fontSize: 13 }}
+                                  >
+                                    {padre.nombre}
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </span>
+                        ) : (
+                          <MenuAcciones
+                            producto={p}
+                            nombrePadre={p.producto_padre_id ? nombresPadre[p.producto_padre_id] : undefined}
+                            onNoRastrearStock={() => actualizarIgnoraStock(p, !p.ignora_stock)}
+                            onUsoInterno={() => actualizarUsoInterno(p, !p.uso_interno)}
+                            onVincularPaquete={() => setVinculandoPadreId(p.id)}
+                            onQuitarPadre={() => quitarPadre(p)}
+                            onEliminar={() => eliminarProducto(p)}
+                          />
+                        )}
                       </td>
                     </tr>
                   );

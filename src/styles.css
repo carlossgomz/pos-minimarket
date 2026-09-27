@@ -561,6 +561,34 @@ th {
   background: var(--danger-soft-bg-hover);
 }
 
+/* Ítems del menú "⋮" de acciones (Inventario) — a diferencia de .link-btn,
+   ocupan todo el ancho del menú y se alinean a la izquierda, como un menú
+   de verdad en vez de un link suelto. */
+.menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 9px 14px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.menu-item:hover {
+  background: var(--accent-soft-bg-hover);
+}
+
+.menu-item-danger {
+  color: var(--danger-text);
+}
+
+.menu-item-danger:hover {
+  background: var(--danger-soft-bg-hover);
+}
+
 .totales {
   display: flex;
   justify-content: space-between;

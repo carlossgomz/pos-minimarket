@@ -126,6 +126,10 @@ export default function Inventario({
   const [busqueda, setBusqueda] = useState("");
   const [categoriaFiltro, setCategoriaFiltro] = useState("");
   const [soloProblemas, setSoloProblemas] = useState(soloProblemasInicial ?? false);
+  // Entradas/Salidas/Rentabilidad ocultas por defecto — son las que menos
+  // se consultan día a día, y con ellas la tabla obligaba a hacer scroll
+  // horizontal para ver hasta el final de cada fila.
+  const [mostrarMasColumnas, setMostrarMasColumnas] = useState(false);
   // Ahora que esta pantalla queda siempre montada (ver App.tsx), el valor
   // inicial de useState de arriba solo se aplica la PRIMERA vez — sin este
   // efecto, hacer clic de nuevo en el aviso de "stock bajo" desde otra
@@ -631,6 +635,9 @@ export default function Inventario({
             recalculan solas con la tasa del día. Cuando a un producto le queda 1 sola unidad, se
             marca como advertencia aunque no se haya configurado un mínimo.
           </p>
+          <button type="button" className="link-btn" style={{ marginBottom: 8 }} onClick={() => setMostrarMasColumnas((v) => !v)}>
+            {mostrarMasColumnas ? "ocultar entradas/salidas/rentabilidad" : "mostrar entradas/salidas/rentabilidad"}
+          </button>
           <div style={{ overflowX: "auto" }}>
             <table className="tabla-compacta">
               <thead>
@@ -643,9 +650,13 @@ export default function Inventario({
                   <th>Venta USD</th>
                   <th>Venta Bs (hoy)</th>
                   <th>Ganancia USD/u.</th>
-                  <th>Rentabilidad</th>
-                  <th>Entradas</th>
-                  <th>Salidas</th>
+                  {mostrarMasColumnas && (
+                    <>
+                      <th>Rentabilidad</th>
+                      <th>Entradas</th>
+                      <th>Salidas</th>
+                    </>
+                  )}
                   <th>Stock</th>
                   <th>Estado</th>
                   <th>Delivery</th>
@@ -717,9 +728,13 @@ export default function Inventario({
                       <td>{precioVentaUsd(p).toFixed(2)}</td>
                       <td>{precioVentaBsHoy(p, config.tasa_cambio_dia).toFixed(2)}</td>
                       <td>{gananciaUnitariaUsd(p).toFixed(2)}</td>
-                      <td>{rentabilidadPct.toFixed(1)}%</td>
-                      <td>{p.entradas_totales}</td>
-                      <td>{p.salidas_totales}</td>
+                      {mostrarMasColumnas && (
+                        <>
+                          <td>{rentabilidadPct.toFixed(1)}%</td>
+                          <td>{p.entradas_totales}</td>
+                          <td>{p.salidas_totales}</td>
+                        </>
+                      )}
                       <td>{formatearStock(p.stock_actual)}</td>
                       <td>
                         {estado === "agotado" && <span className="badge badge-agotado">Agotado</span>}
@@ -803,7 +818,7 @@ export default function Inventario({
                 })}
                 {productosFiltrados.length === 0 && (
                   <tr>
-                    <td colSpan={15} className="empty">
+                    <td colSpan={mostrarMasColumnas ? 15 : 12} className="empty">
                       {productos.length === 0 ? "Sin productos todavía. Agrega el primero arriba." : "Nada que coincida con el filtro."}
                     </td>
                   </tr>

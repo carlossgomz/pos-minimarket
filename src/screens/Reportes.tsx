@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { getDb } from "../db";
 import { ConfigRow } from "../types";
 import { fechaHoraVenezuela } from "../fecha";
+import { GraficoTorta } from "../graficos";
 
 type FilaReporte = {
   fecha: string; // YYYY-MM-DD
@@ -354,6 +355,9 @@ export default function Reportes({ config }: { config: ConfigRow }) {
       {porMetodo.length > 0 && (
         <div className="card">
           <h2>Productos vendidos por método de pago</h2>
+          <div style={{ marginBottom: 14 }}>
+            <GraficoTorta datos={porMetodo.map((m) => ({ etiqueta: m.metodo.split("_").join(" "), valor: m.monto_bs }))} />
+          </div>
           <table>
             <thead>
               <tr>

@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import { getDb } from "../db";
 import { ConfigRow } from "../types";
 import { hoyVenezuela } from "../fecha";
+import { GraficoTorta, BarraHorizontal, HistogramaHoras, COLORES } from "../graficos";
+import KaxMascota, { PoseKax } from "../KaxMascota";
+import { obtenerConclusiones } from "../asistente";
 
 function fechaISO(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -44,6 +47,9 @@ export default function Estadisticas({ config }: { config: ConfigRow }) {
   const [categorias, setCategorias] = useState<CategoriaTop[]>([]);
   const [horasPico, setHorasPico] = useState<HoraPico[]>([]);
   const [clientesNuevos, setClientesNuevos] = useState(0);
+  const [totalBs, setTotalBs] = useState(0);
+  const [gananciaBs, setGananciaBs] = useState(0);
+  const [numVentas, setNumVentas] = useState(0);
 
   async function cargar() {
     setCargando(true);
@@ -125,14 +131,15 @@ export default function Estadisticas({ config }: { config: ConfigRow }) {
         )
       );
 
+      // Sin LIMIT/ORDER BY acá — se completan las 24 horas del día más
+      // abajo (con 0 en las que no hubo ventas) para el histograma
+      // completo, no solo las puntas.
       setHorasPico(
         await db.select<HoraPico[]>(
           `SELECT strftime('%H', fecha_hora) as hora, COUNT(*) as num_ventas
            FROM ventas
            WHERE date(fecha_hora) BETWEEN $1 AND $2
-           GROUP BY hora
-           ORDER BY num_ventas DESC
-           LIMIT 3`,
+           GROUP BY hora`,
           [desde, hasta]
         )
       );
@@ -142,6 +149,23 @@ export default function Estadisticas({ config }: { config: ConfigRow }) {
         [desde, hasta]
       );
       setClientesNuevos(nuevos[0]?.n ?? 0);
+
+      // Total vendido y ganancia del mismo rango — para que el Asistente
+      // Kax pueda comentar el margen general, igual que en Reportes.
+      const totales = await db.select<{ total_bs: number; num_ventas: number }[]>(
+        `SELECT COALESCE(SUM(total_bs), 0) as total_bs, COUNT(*) as num_ventas
+         FROM ventas WHERE date(fecha_hora) BETWEEN $1 AND $2`,
+        [desde, hasta]
+      );
+      setTotalBs(totales[0]?.total_bs ?? 0);
+      setNumVentas(totales[0]?.num_ventas ?? 0);
+      const ganancia = await db.select<{ ganancia_bs: number }[]>(
+        `SELECT COALESCE(SUM(vi.cantidad * (vi.precio_unit_bs - p.costo_actual_usd * v.tasa_cambio_dia)), 0) as ganancia_bs
+         FROM venta_items vi JOIN ventas v ON v.id = vi.venta_id JOIN productos p ON p.id = vi.producto_id
+         WHERE date(v.fecha_hora) BETWEEN $1 AND $2`,
+        [desde, hasta]
+      );
+      setGananciaBs(ganancia[0]?.ganancia_bs ?? 0);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -170,9 +194,33 @@ export default function Estadisticas({ config }: { config: ConfigRow }) {
     }
   }
 
-  const totalPagos = metodosPago.reduce((a, m) => a + m.monto_bs, 0);
   const maxCantidad = Math.max(1, ...productosPorCantidad.map((p) => p.cantidad));
+  const maxGananciaProducto = Math.max(1, ...productosPorGanancia.map((p) => p.ganancia_bs));
   const maxGasto = Math.max(1, ...clientesFrecuentes.map((c) => c.total_gastado_bs));
+
+  const horasPorHora: Record<string, number> = {};
+  for (const h of horasPico) horasPorHora[h.hora] = h.num_ventas;
+  const horas24 = Array.from({ length: 24 }, (_, h) => {
+    const hh = String(h).padStart(2, "0");
+    return { hora: hh, num_ventas: horasPorHora[hh] ?? 0 };
+  });
+  const horaPicoTop = horas24.reduce((a, b) => (b.num_ventas > a.num_ventas ? b : a), horas24[0]);
+
+  const conclusiones = obtenerConclusiones({
+    totalBs,
+    gananciaBs,
+    numVentas,
+    metodosPago,
+    productosPorCantidad,
+    categorias,
+    clientesFrecuentes,
+    horaPicoTop,
+  });
+  const poseKax: PoseKax = conclusiones.some((c) => c.prioridad === "atencion")
+    ? "alerta"
+    : conclusiones.some((c) => c.prioridad === "positivo")
+      ? "celebrando"
+      : "neutral";
 
   return (
     <div>
@@ -192,44 +240,53 @@ export default function Estadisticas({ config }: { config: ConfigRow }) {
       {error && <p className="error">Error: {error}</p>}
       {cargando && <p className="hint">Cargando…</p>}
 
+      {conclusiones.length > 0 && (
+        <div className="card">
+          <div className="form-row" style={{ alignItems: "center", marginBottom: 10 }}>
+            <KaxMascota pose={poseKax} size={40} />
+            <h2 style={{ margin: 0 }}>Asistente Kax</h2>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {conclusiones.map((c, i) => (
+              <div
+                key={i}
+                style={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: 10,
+                  borderRadius: 10,
+                  padding: 10,
+                  fontSize: 14,
+                  background:
+                    c.prioridad === "atencion" ? "var(--warn-bg)" : c.prioridad === "positivo" ? "var(--accent-soft-bg)" : "var(--border-subtle)",
+                }}
+              >
+                <span style={{ flexShrink: 0 }}>{c.icono}</span>
+                <span>{c.texto}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="venta-layout">
         <div className="card">
           <h2>Productos más vendidos</h2>
           {productosPorCantidad.length === 0 ? (
             <p className="empty">Sin ventas en ese rango de fechas.</p>
           ) : (
-            <table>
-              <thead>
-                <tr>
-                  <th>Producto</th>
-                  <th>Cantidad</th>
-                  <th>Total Bs</th>
-                  <th>Total USD</th>
-                </tr>
-              </thead>
-              <tbody>
-                {productosPorCantidad.map((p) => (
-                  <tr key={p.producto_id}>
-                    <td>
-                      {p.nombre}
-                      <div style={{ background: "var(--border-subtle)", height: 4, borderRadius: 2, marginTop: 3 }}>
-                        <div
-                          style={{
-                            background: "var(--accent)",
-                            height: 4,
-                            borderRadius: 2,
-                            width: `${(p.cantidad / maxCantidad) * 100}%`,
-                          }}
-                        />
-                      </div>
-                    </td>
-                    <td>{p.cantidad}</td>
-                    <td>{p.monto_bs.toFixed(2)}</td>
-                    <td>{(p.monto_bs / config.tasa_cambio_dia).toFixed(2)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {productosPorCantidad.slice(0, 5).map((p, i) => (
+                <BarraHorizontal
+                  key={p.producto_id}
+                  etiqueta={p.nombre}
+                  valor={p.cantidad}
+                  max={maxCantidad}
+                  color={COLORES[i % COLORES.length]}
+                  sufijo={`${p.cantidad} vendidos`}
+                />
+              ))}
+            </div>
           )}
         </div>
 
@@ -238,24 +295,18 @@ export default function Estadisticas({ config }: { config: ConfigRow }) {
           {productosPorGanancia.length === 0 ? (
             <p className="empty">Sin ventas en ese rango de fechas.</p>
           ) : (
-            <table>
-              <thead>
-                <tr>
-                  <th>Producto</th>
-                  <th>Ganancia Bs</th>
-                  <th>Ganancia USD</th>
-                </tr>
-              </thead>
-              <tbody>
-                {productosPorGanancia.map((p) => (
-                  <tr key={p.producto_id}>
-                    <td>{p.nombre}</td>
-                    <td>{p.ganancia_bs.toFixed(2)}</td>
-                    <td>{(p.ganancia_bs / config.tasa_cambio_dia).toFixed(2)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {productosPorGanancia.slice(0, 5).map((p, i) => (
+                <BarraHorizontal
+                  key={p.producto_id}
+                  etiqueta={p.nombre}
+                  valor={p.ganancia_bs}
+                  max={maxGananciaProducto}
+                  color={COLORES[i % COLORES.length]}
+                  sufijo={`Bs ${p.ganancia_bs.toLocaleString("es-VE", { maximumFractionDigits: 0 })}`}
+                />
+              ))}
+            </div>
           )}
         </div>
       </div>
@@ -266,38 +317,18 @@ export default function Estadisticas({ config }: { config: ConfigRow }) {
           {clientesFrecuentes.length === 0 ? (
             <p className="empty">Sin compras con cliente identificado en ese rango.</p>
           ) : (
-            <table>
-              <thead>
-                <tr>
-                  <th>Cliente</th>
-                  <th>N° compras</th>
-                  <th>Total gastado Bs</th>
-                  <th>Total gastado USD</th>
-                </tr>
-              </thead>
-              <tbody>
-                {clientesFrecuentes.map((c) => (
-                  <tr key={c.cliente_id}>
-                    <td>
-                      {c.nombre ?? "—"}
-                      <div style={{ background: "var(--border-subtle)", height: 4, borderRadius: 2, marginTop: 3 }}>
-                        <div
-                          style={{
-                            background: "var(--accent)",
-                            height: 4,
-                            borderRadius: 2,
-                            width: `${(c.total_gastado_bs / maxGasto) * 100}%`,
-                          }}
-                        />
-                      </div>
-                    </td>
-                    <td>{c.num_compras}</td>
-                    <td>{c.total_gastado_bs.toFixed(2)}</td>
-                    <td>{(c.total_gastado_bs / config.tasa_cambio_dia).toFixed(2)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {clientesFrecuentes.slice(0, 5).map((c, i) => (
+                <BarraHorizontal
+                  key={c.cliente_id}
+                  etiqueta={`${c.nombre ?? "—"} (${c.num_compras})`}
+                  valor={c.total_gastado_bs}
+                  max={maxGasto}
+                  color={COLORES[i % COLORES.length]}
+                  sufijo={`Bs ${c.total_gastado_bs.toLocaleString("es-VE", { maximumFractionDigits: 0 })}`}
+                />
+              ))}
+            </div>
           )}
           <p className="hint">Clientes nuevos registrados en el rango: {clientesNuevos}</p>
         </div>
@@ -307,26 +338,7 @@ export default function Estadisticas({ config }: { config: ConfigRow }) {
           {metodosPago.length === 0 ? (
             <p className="empty">Sin pagos en ese rango de fechas.</p>
           ) : (
-            <table>
-              <thead>
-                <tr>
-                  <th>Método</th>
-                  <th>Total Bs</th>
-                  <th>Total USD</th>
-                  <th>%</th>
-                </tr>
-              </thead>
-              <tbody>
-                {metodosPago.map((m) => (
-                  <tr key={m.metodo}>
-                    <td>{m.metodo}</td>
-                    <td>{m.monto_bs.toFixed(2)}</td>
-                    <td>{(m.monto_bs / config.tasa_cambio_dia).toFixed(2)}</td>
-                    <td>{totalPagos > 0 ? ((m.monto_bs / totalPagos) * 100).toFixed(1) : "0.0"}%</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <GraficoTorta datos={metodosPago.map((m) => ({ etiqueta: m.metodo.split("_").join(" "), valor: m.monto_bs }))} />
           )}
         </div>
       </div>
@@ -337,24 +349,7 @@ export default function Estadisticas({ config }: { config: ConfigRow }) {
           {categorias.length === 0 ? (
             <p className="empty">Sin ventas en ese rango de fechas.</p>
           ) : (
-            <table>
-              <thead>
-                <tr>
-                  <th>Categoría</th>
-                  <th>Total Bs</th>
-                  <th>Total USD</th>
-                </tr>
-              </thead>
-              <tbody>
-                {categorias.map((c) => (
-                  <tr key={c.categoria}>
-                    <td>{c.categoria}</td>
-                    <td>{c.monto_bs.toFixed(2)}</td>
-                    <td>{(c.monto_bs / config.tasa_cambio_dia).toFixed(2)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <GraficoTorta datos={categorias.map((c) => ({ etiqueta: c.categoria, valor: c.monto_bs }))} />
           )}
         </div>
 
@@ -363,22 +358,13 @@ export default function Estadisticas({ config }: { config: ConfigRow }) {
           {horasPico.length === 0 ? (
             <p className="empty">Sin ventas en ese rango de fechas.</p>
           ) : (
-            <table>
-              <thead>
-                <tr>
-                  <th>Hora</th>
-                  <th>N° ventas</th>
-                </tr>
-              </thead>
-              <tbody>
-                {horasPico.map((h) => (
-                  <tr key={h.hora}>
-                    <td>{h.hora}:00 - {h.hora}:59</td>
-                    <td>{h.num_ventas}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <>
+              <p className="hint" style={{ marginTop: 0 }}>
+                La hora más movida es <strong style={{ color: "var(--accent-text)" }}>{horaPicoTop.hora}:00</strong>, con{" "}
+                {horaPicoTop.num_ventas} venta{horaPicoTop.num_ventas === 1 ? "" : "s"}.
+              </p>
+              <HistogramaHoras horas24={horas24} horaPico={horaPicoTop.hora} />
+            </>
           )}
           <p className="hint">Hora local de Venezuela.</p>
         </div>

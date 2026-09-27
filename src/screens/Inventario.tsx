@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { getDb } from "../db";
 import { Categoria, ConfigRow, ProductoInventario } from "../types";
@@ -29,16 +30,61 @@ function MenuAcciones({
   onEliminar: () => void;
 }) {
   const [abierto, setAbierto] = useState(false);
+  // Coordenadas del menú en pantalla (no relativas a la tabla) — se
+  // calculan al abrir, a partir de dónde está el botón realmente en la
+  // ventana (getBoundingClientRect). Antes el menú se desplegaba HACIA
+  // ABAJO y posicionado dentro de la celda: en filas cerca del final de la
+  // tabla se salía de lo visible y había que hacer scroll para verlo
+  // completo — pero el scroll del contenedor disparaba el "clic afuera" y
+  // lo cerraba antes de poder usarlo. Con position:fixed + coordenadas de
+  // pantalla, el menú queda SIEMPRE completo y desplegado hacia arriba del
+  // botón, sin importar en qué fila esté ni cuánto scroll tenga la tabla.
+  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  const botonRef = useRef<HTMLButtonElement>(null);
+  // El menú se renderiza con un portal directo a document.body (ver abajo)
+  // porque Inventario envuelve la tabla en ".seccion-ancha", que tiene un
+  // transform (para centrarla más ancha que .page) — un transform en un
+  // ancestro vuelve a ESE elemento el "contenedor" de cualquier
+  // position:fixed adentro, así que las coordenadas de pantalla
+  // (getBoundingClientRect) quedaban mal aplicadas y el menú aparecía
+  // lejísimos. Con el portal, el menú cuelga directo de <body> (sin
+  // transform de por medio) y las coordenadas de pantalla vuelven a ser
+  // correctas. Como el menú ya no es descendiente real en el DOM del botón,
+  // el "clic afuera" necesita chequear también este ref del menú.
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!abierto) return;
     function alHacerClicFuera(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setAbierto(false);
+      const target = e.target as Node;
+      const dentroDelBoton = ref.current && ref.current.contains(target);
+      const dentroDelMenu = menuRef.current && menuRef.current.contains(target);
+      if (!dentroDelBoton && !dentroDelMenu) setAbierto(false);
+    }
+    // Si se hace scroll (de la tabla o de la página) o se redimensiona la
+    // ventana mientras está abierto, mejor cerrarlo — las coordenadas
+    // quedarían apuntando al lugar viejo.
+    function alScrollearORedimensionar() {
+      setAbierto(false);
     }
     document.addEventListener("mousedown", alHacerClicFuera);
-    return () => document.removeEventListener("mousedown", alHacerClicFuera);
+    window.addEventListener("scroll", alScrollearORedimensionar, true);
+    window.addEventListener("resize", alScrollearORedimensionar);
+    return () => {
+      document.removeEventListener("mousedown", alHacerClicFuera);
+      window.removeEventListener("scroll", alScrollearORedimensionar, true);
+      window.removeEventListener("resize", alScrollearORedimensionar);
+    };
   }, [abierto]);
+
+  function alternar() {
+    if (!abierto) {
+      const rect = botonRef.current?.getBoundingClientRect();
+      if (rect) setCoords({ top: rect.top - 4, left: rect.right });
+    }
+    setAbierto((v) => !v);
+  }
 
   function elegir(accion: () => void) {
     accion();
@@ -48,51 +94,60 @@ function MenuAcciones({
   return (
     <div ref={ref} style={{ position: "relative", display: "inline-block" }}>
       <button
+        ref={botonRef}
         type="button"
         className="link-btn"
         title="Más opciones"
-        onClick={() => setAbierto((v) => !v)}
+        onClick={alternar}
         style={{ fontSize: 18, lineHeight: 1, padding: "2px 10px" }}
       >
         ⋮
       </button>
-      {abierto && (
-        <div
-          style={{
-            position: "absolute",
-            right: 0,
-            top: "calc(100% + 4px)",
-            background: "var(--bg-card)",
-            border: "1px solid var(--border)",
-            borderRadius: 8,
-            minWidth: 180,
-            zIndex: 20,
-            boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
-            overflow: "hidden",
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
-          <button type="button" className="menu-item" onClick={() => elegir(onNoRastrearStock)}>
-            {producto.ignora_stock ? "sí rastrea stock" : "no rastrear stock"}
-          </button>
-          <button type="button" className="menu-item" onClick={() => elegir(onUsoInterno)}>
-            {producto.uso_interno ? "producto normal" : "uso interno"}
-          </button>
-          {producto.producto_padre_id ? (
-            <button type="button" className="menu-item" onClick={() => elegir(onQuitarPadre)}>
-              quitar vínculo ({nombrePadre ?? "…"})
+      {abierto &&
+        coords &&
+        createPortal(
+          <div
+            ref={menuRef}
+            style={{
+              position: "fixed",
+              top: coords.top,
+              left: coords.left,
+              // El punto (top, left) es la esquina inferior-derecha del
+              // menú — así se despliega hacia arriba y hacia la izquierda
+              // del botón, nunca hacia abajo.
+              transform: "translate(-100%, -100%)",
+              background: "var(--bg-card)",
+              border: "1px solid var(--border)",
+              borderRadius: 8,
+              minWidth: 180,
+              zIndex: 50,
+              boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
+              overflow: "hidden",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <button type="button" className="menu-item" onClick={() => elegir(onNoRastrearStock)}>
+              {producto.ignora_stock ? "sí rastrea stock" : "no rastrear stock"}
             </button>
-          ) : (
-            <button type="button" className="menu-item" onClick={() => elegir(onVincularPaquete)}>
-              vincular paquete
+            <button type="button" className="menu-item" onClick={() => elegir(onUsoInterno)}>
+              {producto.uso_interno ? "producto normal" : "uso interno"}
             </button>
-          )}
-          <button type="button" className="menu-item menu-item-danger" onClick={() => elegir(onEliminar)}>
-            eliminar
-          </button>
-        </div>
-      )}
+            {producto.producto_padre_id ? (
+              <button type="button" className="menu-item" onClick={() => elegir(onQuitarPadre)}>
+                quitar vínculo ({nombrePadre ?? "…"})
+              </button>
+            ) : (
+              <button type="button" className="menu-item" onClick={() => elegir(onVincularPaquete)}>
+                vincular paquete
+              </button>
+            )}
+            <button type="button" className="menu-item menu-item-danger" onClick={() => elegir(onEliminar)}>
+              eliminar
+            </button>
+          </div>,
+          document.body
+        )}
     </div>
   );
 }
@@ -401,10 +456,15 @@ export default function Inventario({
   const [busquedaPadre, setBusquedaPadre] = useState("");
   const [resultadosPadre, setResultadosPadre] = useState<ProductoInventario[]>([]);
   const [nombresPadre, setNombresPadre] = useState<Record<string, string>>({});
+  // Paso 2 del vínculo: ya se eligió el paquete, falta preguntar cuántas
+  // unidades genera — se pide UNA sola vez acá (no cada vez que se abre en
+  // Venta) porque un mismo paquete siempre trae la misma cantidad.
+  const [padreSeleccionado, setPadreSeleccionado] = useState<ProductoInventario | null>(null);
+  const [cantidadDesglose, setCantidadDesglose] = useState("");
 
   useEffect(() => {
     const term = busquedaPadre.trim();
-    if (term.length < 2 || !vinculandoPadreId) {
+    if (term.length < 2 || !vinculandoPadreId || padreSeleccionado) {
       setResultadosPadre([]);
       return;
     }
@@ -417,15 +477,25 @@ export default function Inventario({
       setResultadosPadre(rows);
     }, 200);
     return () => clearTimeout(timer);
-  }, [busquedaPadre, vinculandoPadreId]);
+  }, [busquedaPadre, vinculandoPadreId, padreSeleccionado]);
 
-  async function vincularPadre(p: ProductoInventario, padre: ProductoInventario) {
-    const db = await getDb();
-    await db.execute("UPDATE productos SET producto_padre_id = $1 WHERE id = $2", [padre.id, p.id]);
+  function cancelarVinculo() {
     setVinculandoPadreId(null);
     setBusquedaPadre("");
     setResultadosPadre([]);
+    setPadreSeleccionado(null);
+    setCantidadDesglose("");
+  }
+
+  async function vincularPadre(p: ProductoInventario, padre: ProductoInventario, cantidad: number) {
+    const db = await getDb();
+    await db.execute("UPDATE productos SET producto_padre_id = $1, unidades_por_paquete_desglose = $2 WHERE id = $3", [
+      padre.id,
+      cantidad,
+      p.id,
+    ]);
     setNombresPadre((prev) => ({ ...prev, [p.id]: padre.nombre }));
+    cancelarVinculo();
     await cargar();
   }
 
@@ -762,45 +832,81 @@ export default function Inventario({
                           </button>
                         )}
                         {vinculandoPadreId === p.id ? (
-                          <span style={{ position: "relative", display: "inline-block" }}>
-                            <input
-                              autoFocus
-                              className="cant-input"
-                              style={{ width: 140 }}
-                              placeholder="Buscar paquete..."
-                              value={busquedaPadre}
-                              onChange={(e) => setBusquedaPadre(e.target.value)}
-                              onBlur={() => setTimeout(() => setVinculandoPadreId(null), 150)}
-                            />
-                            {resultadosPadre.length > 0 && (
-                              <ul
-                                style={{
-                                  position: "absolute",
-                                  top: "calc(100% + 4px)",
-                                  left: 0,
-                                  background: "var(--bg-card)",
-                                  border: "1px solid var(--border)",
-                                  borderRadius: 8,
-                                  listStyle: "none",
-                                  margin: 0,
-                                  padding: 4,
-                                  zIndex: 10,
-                                  minWidth: 200,
-                                  boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+                          padreSeleccionado ? (
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                              <span className="hint" style={{ whiteSpace: "nowrap" }}>
+                                1 {padreSeleccionado.nombre} ={" "}
+                              </span>
+                              <input
+                                autoFocus
+                                type="number"
+                                min={1}
+                                className="cant-input"
+                                style={{ width: 55 }}
+                                value={cantidadDesglose}
+                                onChange={(e) => setCantidadDesglose(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" && Number(cantidadDesglose) > 0) {
+                                    vincularPadre(p, padreSeleccionado, Number(cantidadDesglose));
+                                  }
                                 }}
+                              />
+                              <button
+                                type="button"
+                                className="link-btn"
+                                disabled={!(Number(cantidadDesglose) > 0)}
+                                onMouseDown={() => vincularPadre(p, padreSeleccionado, Number(cantidadDesglose))}
                               >
-                                {resultadosPadre.map((padre) => (
-                                  <li
-                                    key={padre.id}
-                                    onMouseDown={() => vincularPadre(p, padre)}
-                                    style={{ padding: "6px 8px", cursor: "pointer", borderRadius: 6, fontSize: 13 }}
-                                  >
-                                    {padre.nombre}
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-                          </span>
+                                ✓
+                              </button>
+                              <button type="button" className="link-btn" onMouseDown={() => cancelarVinculo()}>
+                                cancelar
+                              </button>
+                            </span>
+                          ) : (
+                            <span style={{ position: "relative", display: "inline-block" }}>
+                              <input
+                                autoFocus
+                                className="cant-input"
+                                style={{ width: 140 }}
+                                placeholder="Buscar paquete..."
+                                value={busquedaPadre}
+                                onChange={(e) => setBusquedaPadre(e.target.value)}
+                                onBlur={() => setTimeout(() => setVinculandoPadreId(null), 150)}
+                              />
+                              {resultadosPadre.length > 0 && (
+                                <ul
+                                  style={{
+                                    position: "absolute",
+                                    top: "calc(100% + 4px)",
+                                    left: 0,
+                                    background: "var(--bg-card)",
+                                    border: "1px solid var(--border)",
+                                    borderRadius: 8,
+                                    listStyle: "none",
+                                    margin: 0,
+                                    padding: 4,
+                                    zIndex: 10,
+                                    minWidth: 200,
+                                    boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+                                  }}
+                                >
+                                  {resultadosPadre.map((padre) => (
+                                    <li
+                                      key={padre.id}
+                                      onMouseDown={() => {
+                                        setPadreSeleccionado(padre);
+                                        setResultadosPadre([]);
+                                      }}
+                                      style={{ padding: "6px 8px", cursor: "pointer", borderRadius: 6, fontSize: 13 }}
+                                    >
+                                      {padre.nombre}
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </span>
+                          )
                         ) : (
                           <MenuAcciones
                             producto={p}

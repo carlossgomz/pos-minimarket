@@ -812,15 +812,15 @@ export default function Venta({
   // usa Movimientos.tsx, atómico y con FIFO de costos.
   const [propuestaApertura, setPropuestaApertura] = useState<{
     producto: Producto;
-    padre: { id: string; nombre: string; stock_actual: number; unidades_por_paquete: number };
+    padre: { id: string; nombre: string; stock_actual: number };
   } | null>(null);
   const [abriendoPaquete, setAbriendoPaquete] = useState(false);
 
   async function agregarAlCarrito(p: Producto) {
     if (p.stock_actual <= 0 && p.producto_padre_id) {
       const db = await getDb();
-      const [padre] = await db.select<{ id: string; nombre: string; stock_actual: number; unidades_por_paquete: number }[]>(
-        "SELECT id, nombre, stock_actual, unidades_por_paquete FROM productos WHERE id = $1",
+      const [padre] = await db.select<{ id: string; nombre: string; stock_actual: number }[]>(
+        "SELECT id, nombre, stock_actual FROM productos WHERE id = $1",
         [p.producto_padre_id]
       );
       if (padre && padre.stock_actual >= 1) {
@@ -842,7 +842,7 @@ export default function Venta({
           producto_origen_id: padre.id,
           producto_destino_id: producto.id,
           cantidad_origen: 1,
-          unidades_generadas: padre.unidades_por_paquete || 1,
+          unidades_generadas: producto.unidades_por_paquete_desglose || 1,
           motivo: "Apertura automática desde Venta",
           fecha_hora: fechaHoraVenezuela(),
         },
@@ -2262,7 +2262,7 @@ export default function Venta({
               {propuestaApertura.padre.nombre}" disponibles.
             </p>
             <p>
-              ¿Abrir 1 "{propuestaApertura.padre.nombre}" para generar {propuestaApertura.padre.unidades_por_paquete} unidades de "
+              ¿Abrir 1 "{propuestaApertura.padre.nombre}" para generar {propuestaApertura.producto.unidades_por_paquete_desglose || 1} unidades de "
               {propuestaApertura.producto.nombre}"?
             </p>
             <div className="form-row">

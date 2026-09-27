@@ -21,6 +21,10 @@ export type Producto = {
   ignora_stock: number; // 0/1 — producto de servicio (ej. delivery), nunca marca "stock por revisar"
   uso_interno: number; // 0/1 - solo para registrar compra (ej. materia prima que se desglosa), nunca se vende directo ni cuenta en estadisticas
   producto_padre_id: string | null; // producto "paquete" del que sale este (ej. CIGARRO DETALLADO -> CIGARRO CAJA), para el atajo de abrir paquete en Venta
+  // Cuántas unidades de ESTE producto genera 1 unidad del padre (ej. 1 caja
+  // de cigarros = 20 detallados). Campo separado de unidades_por_paquete,
+  // que es otra cosa (cajas por "brazo" de compra, para el costeo).
+  unidades_por_paquete_desglose: number | null;
 };
 
 export type ProductoInventario = Producto & {

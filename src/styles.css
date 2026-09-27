@@ -589,6 +589,102 @@ th {
   background: var(--danger-soft-bg-hover);
 }
 
+/* --- Mascota Kax fija a la izquierda, acompañante en cualquier pestaña
+   (ver AsistenteLateral.tsx) — z-index por debajo del menú "⋮" de
+   Inventario (50) para que ese menú siempre gane si llegaran a solaparse. */
+.kax-asistente-lateral {
+  position: fixed;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 340px;
+}
+
+.kax-asistente-mini {
+  position: fixed;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 30;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  opacity: 0.85;
+  transition: opacity 0.15s;
+}
+.kax-asistente-mini:hover {
+  opacity: 1;
+}
+
+.kax-asistente-cerrar {
+  position: absolute;
+  top: -8px;
+  left: 46px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  z-index: 31;
+}
+.kax-asistente-cerrar:hover {
+  color: var(--text);
+}
+
+.kax-burbuja {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.kax-burbuja-icono {
+  flex-shrink: 0;
+}
+.kax-burbuja-clicable {
+  cursor: pointer;
+}
+.kax-burbuja-clicable:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft-bg);
+}
+
+.kax-puntos {
+  position: absolute;
+  bottom: -18px;
+  left: 74px;
+  display: flex;
+  gap: 5px;
+}
+.kax-puntos button {
+  width: 7px;
+  height: 7px;
+  padding: 0;
+  border-radius: 50%;
+  border: none;
+  background: var(--border);
+  cursor: pointer;
+}
+.kax-puntos button.kax-punto-activo {
+  background: var(--accent);
+}
+
 .totales {
   display: flex;
   justify-content: space-between;

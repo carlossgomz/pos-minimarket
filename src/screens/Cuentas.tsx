@@ -17,6 +17,7 @@ import EditorItemsVenta from "./EditorItemsVenta";
 import { normalizarTexto, sqlSinAcentos } from "../busqueda";
 import { fechaHoraVenezuela } from "../fecha";
 import { monedaDeMetodo } from "../precios";
+import { exportarExcel } from "../exportarExcel";
 
 const EPS = 0.01;
 // Comisión de delivery: $0.10 por cada producto entregado (por WhatsApp o
@@ -226,6 +227,41 @@ function CuentasPorCobrar({ config, esAdmin }: { config: ConfigRow; esAdmin: boo
 
   const totalGeneralUsd = clientes.reduce((acc, c) => acc + c.total_pendiente_usd, 0);
 
+  const [exportando, setExportando] = useState(false);
+  // Antigüedad venta por venta (no solo el total por cliente que ya se ve
+  // en pantalla) — para que el admin pueda analizarla en Excel sin tener
+  // que abrir cliente por cliente dentro de Kaxa.
+  async function exportarClientesExcel() {
+    setExportando(true);
+    try {
+      const db = await getDb();
+      const rows = await db.select<
+        { cliente_nombre: string; cliente_cedula: string; numero_ticket: string; fecha_hora: string; monto_pendiente_usd: number }[]
+      >(
+        `SELECT cliente_nombre, cliente_cedula, numero_ticket, fecha_hora, monto_pendiente_usd
+         FROM ventas WHERE estado = 'CREDITO_PENDIENTE' ORDER BY cliente_nombre, fecha_hora`
+      );
+      await exportarExcel("cuentas_por_cobrar.xlsx", [
+        {
+          nombre: "Antigüedad",
+          columnas: ["Cliente", "Cédula", "Ticket", "Fecha", "Días de atraso", "Pendiente USD"],
+          filas: rows.map((r) => [
+            r.cliente_nombre,
+            r.cliente_cedula,
+            r.numero_ticket,
+            r.fecha_hora,
+            diasTranscurridos(r.fecha_hora),
+            Number(r.monto_pendiente_usd.toFixed(2)),
+          ]),
+        },
+      ]);
+    } catch (e) {
+      setMensaje(`No se pudo exportar: ${String(e)}`);
+    } finally {
+      setExportando(false);
+    }
+  }
+
   return (
     <div className="card">
       <h2>Clientes con saldo pendiente</h2>
@@ -233,6 +269,9 @@ function CuentasPorCobrar({ config, esAdmin }: { config: ConfigRow; esAdmin: boo
         El saldo en bolívares se calcula a la tasa del día de hoy ({config.tasa_cambio_dia.toFixed(2)}{" "}
         Bs/$) — cambia solo si cambias la tasa arriba, no la de cada venta.
       </p>
+      <button type="button" className="link-btn" disabled={exportando} onClick={exportarClientesExcel}>
+        {exportando ? "exportando..." : "exportar a Excel (antigüedad)"}
+      </button>
       <div className="totales" style={{ marginBottom: 12 }}>
         <strong>
           Total pendiente de todos los clientes: USD {totalGeneralUsd.toFixed(2)}{" "}
@@ -589,6 +628,32 @@ function CuentasPorPagar({ config }: { config: ConfigRow }) {
 
   const totalGeneralUsd = proveedores.reduce((acc, p) => acc + p.total_pendiente_usd, 0);
 
+  const [exportando, setExportando] = useState(false);
+  async function exportarProveedoresExcel() {
+    setExportando(true);
+    try {
+      const db = await getDb();
+      const rows = await db.select<{ proveedor_nombre: string; numero_factura: string; fecha: string; saldo_usd: number }[]>(
+        `SELECT pr.nombre as proveedor_nombre, fc.numero_factura, fc.fecha,
+                (fc.monto_total_usd - fc.monto_pagado_usd) as saldo_usd
+         FROM facturas_compra fc JOIN proveedores pr ON pr.id = fc.proveedor_id
+         WHERE fc.estado != 'PAGADA'
+         ORDER BY pr.nombre, fc.fecha`
+      );
+      await exportarExcel("cuentas_por_pagar.xlsx", [
+        {
+          nombre: "Antigüedad",
+          columnas: ["Proveedor", "Factura", "Fecha", "Días de atraso", "Saldo USD"],
+          filas: rows.map((r) => [r.proveedor_nombre, r.numero_factura, r.fecha, diasTranscurridos(r.fecha), Number(r.saldo_usd.toFixed(2))]),
+        },
+      ]);
+    } catch (e) {
+      setMensaje(`No se pudo exportar: ${String(e)}`);
+    } finally {
+      setExportando(false);
+    }
+  }
+
   return (
     <div className="card">
       <h2>Proveedores con saldo pendiente</h2>
@@ -596,6 +661,9 @@ function CuentasPorPagar({ config }: { config: ConfigRow }) {
         El saldo en bolívares se calcula a la tasa del día de hoy ({config.tasa_cambio_dia.toFixed(2)}{" "}
         Bs/$) — cambia solo si cambias la tasa arriba, no la de cada factura.
       </p>
+      <button type="button" className="link-btn" disabled={exportando} onClick={exportarProveedoresExcel}>
+        {exportando ? "exportando..." : "exportar a Excel (antigüedad)"}
+      </button>
       <div className="totales" style={{ marginBottom: 12 }}>
         <strong>
           Total pendiente a todos los proveedores: USD {totalGeneralUsd.toFixed(2)}{" "}
@@ -1507,8 +1575,19 @@ function CreditosPagados({ esAdmin }: { esAdmin: boolean }) {
   );
 }
 
-export default function Cuentas({ config, esAdmin }: { config: ConfigRow; esAdmin: boolean }) {
-  const [sub, setSub] = useState<"cobrar" | "cobrados" | "pagar" | "pagadas" | "delivery">("cobrar");
+export default function Cuentas({
+  config,
+  esAdmin,
+  subInicial,
+}: {
+  config: ConfigRow;
+  esAdmin: boolean;
+  // Para llegar directo a "por cobrar" o "por pagar" desde afuera (ej. un
+  // clic en un consejo del Asistente Kax) en vez de caer siempre en
+  // "cobrar" — ver AsistenteLateral.tsx y App.tsx.
+  subInicial?: "cobrar" | "pagar";
+}) {
+  const [sub, setSub] = useState<"cobrar" | "cobrados" | "pagar" | "pagadas" | "delivery">(subInicial ?? "cobrar");
 
   // El cajero ve las cuentas por cobrar de clientes y el historial de
   // créditos pagados (puede consultarlo, pero no corregir el método de

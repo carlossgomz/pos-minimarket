@@ -27,6 +27,8 @@ import Notificaciones, { NotificacionItem } from "./screens/Notificaciones";
 import PendientesCodigoBarras from "./screens/PendientesCodigoBarras";
 import StockPendiente from "./screens/StockPendiente";
 import Configuracion from "./screens/Configuracion";
+import AsistenteLateral from "./AsistenteLateral";
+import { DestinoConsejo } from "./asistente";
 import logo from "./assets/logo.png";
 
 type Tab =
@@ -280,6 +282,22 @@ export default function App() {
   // (generaba demasiado ruido) — solo los casos duros: 0 o 1 unidad.
   const [productosStockBajo, setProductosStockBajo] = useState(0);
   const [abrirInventarioFiltrado, setAbrirInventarioFiltrado] = useState(false);
+
+  // A qué sub-pestaña de Cuentas ir si el Asistente Kax manda para allá
+  // (ver AsistenteLateral.tsx) — Cuentas no queda montado permanentemente,
+  // así que un simple valor inicial alcanza sin necesitar un useEffect.
+  const [cuentasSubInicial, setCuentasSubInicial] = useState<"cobrar" | "pagar">("cobrar");
+  function alNavegarDesdeAsistente(destino: DestinoConsejo) {
+    if (destino === "cuentas-cobrar") {
+      setCuentasSubInicial("cobrar");
+      setTab("cuentas");
+    } else if (destino === "cuentas-pagar") {
+      setCuentasSubInicial("pagar");
+      setTab("cuentas");
+    } else if (destino === "inventario") {
+      setTab("inventario");
+    }
+  }
 
   async function cargarProductosStockBajo() {
     try {
@@ -769,7 +787,7 @@ export default function App() {
           <Compras config={config} onConfigActualizado={cargarConfig} visible={tabEfectivo === "compras"} />
         </div>
       )}
-      {tabEfectivo === "cuentas" && <Cuentas config={config} esAdmin={esAdmin} />}
+      {tabEfectivo === "cuentas" && <Cuentas config={config} esAdmin={esAdmin} subInicial={cuentasSubInicial} />}
       <div style={{ display: tabEfectivo === "cuadre" ? "block" : "none" }}>
         <CuadreCaja config={config} visible={tabEfectivo === "cuadre"} />
       </div>
@@ -832,6 +850,7 @@ export default function App() {
           onSaltar={saltarActualizacion}
         />
       )}
+      <AsistenteLateral esAdmin={esAdmin} tasa={config.tasa_cambio_dia} onNavegar={alNavegarDesdeAsistente} />
       <div className="marca-dev">hecho por Carloscode_</div>
     </div>
   );

@@ -41,14 +41,13 @@ type Tab =
   | "reportes"
   | "estadisticas"
   | "facturas"
-  | "usuarios"
-  | "configuracion";
+  | "usuarios";
 
 // El cajero solo ve estas secciones — compras, proveedores, reportes y
 // usuarios siguen siendo solo para admin. Se filtra acá, en el frontend,
 // no hay bases de datos separadas: es el mismo archivo .db para los dos
 // roles.
-const SECCIONES_CAJERO = new Set<Tab>(["venta", "facturas", "clientes", "cuentas", "inventario", "cuadre", "configuracion"]);
+const SECCIONES_CAJERO = new Set<Tab>(["venta", "facturas", "clientes", "cuentas", "inventario", "cuadre"]);
 
 // Tema claro/oscuro — se guarda en localStorage (por PC, no por usuario:
 // no tiene sentido que cambie de tema al cerrar sesión). Por defecto queda
@@ -95,6 +94,7 @@ export default function App() {
   const [usuarioActual, setUsuarioActual] = useState<Usuario | null>(null);
 
   const [vendedores, setVendedores] = useState<Vendedor[]>([]);
+  const [mostrarConfiguracion, setMostrarConfiguracion] = useState(false);
   const [mostrarNuevoVendedor, setMostrarNuevoVendedor] = useState(false);
   const [nombreNuevoVendedor, setNombreNuevoVendedor] = useState("");
 
@@ -556,7 +556,6 @@ export default function App() {
     { key: "reportes", label: "Reportes" },
     { key: "estadisticas", label: "Estadísticas" },
     { key: "usuarios", label: "Usuarios" },
-    { key: "configuracion", label: "Configuración" },
   ];
   const pestanasVisibles = esAdmin
     ? TODAS_LAS_PESTANAS
@@ -626,6 +625,14 @@ export default function App() {
   return (
     <div className="page">
       <header className="header">
+        <button
+          type="button"
+          className="config-btn"
+          onClick={() => setMostrarConfiguracion(true)}
+          title="Negocio y Acerca de"
+        >
+          ⚙
+        </button>
         <img src={config.logo_base64 ?? logo} alt={config.nombre_negocio} className="logo-header" />
         <div className="tasa">
           <label>Vendedor</label>
@@ -775,7 +782,6 @@ export default function App() {
         </div>
       )}
       {esAdmin && tabEfectivo === "usuarios" && <Usuarios usuarioActual={usuarioActual} />}
-      {tabEfectivo === "configuracion" && <Configuracion config={config} esAdmin={esAdmin} onConfigActualizado={cargarConfig} />}
       {esAdmin && tabEfectivo === "reportes" && <Reportes config={config} />}
       {esAdmin && tabEfectivo === "estadisticas" && <Estadisticas config={config} />}
       <div style={{ display: tabEfectivo === "facturas" ? "block" : "none" }}>
@@ -805,6 +811,14 @@ export default function App() {
             });
             await cargarStockPendiente();
           }}
+        />
+      )}
+      {mostrarConfiguracion && (
+        <Configuracion
+          config={config}
+          esAdmin={esAdmin}
+          onConfigActualizado={cargarConfig}
+          onCerrar={() => setMostrarConfiguracion(false)}
         />
       )}
       {actualizacion && actualizacion.version !== actualizacionSaltada && (

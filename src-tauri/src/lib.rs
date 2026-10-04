@@ -7,6 +7,17 @@ mod offline;
 
 use tauri::{Emitter, Manager};
 
+// Escribe bytes crudos en una ruta del disco — usado por el exportador de
+// Excel (ver src/exportarExcel.ts): la ruta ya la eligió el propio usuario
+// con el diálogo nativo de "Guardar como" (tauri-plugin-dialog), así que
+// escribir ahí es tan seguro como cualquier "Guardar como" de cualquier
+// programa de escritorio, sin necesitar el sistema de scopes de
+// tauri-plugin-fs (que no soporta rutas arbitrarias elegidas en runtime).
+#[tauri::command]
+fn guardar_archivo(ruta: String, contenido: Vec<u8>) -> Result<(), String> {
+    std::fs::write(&ruta, contenido).map_err(|e| e.to_string())
+}
+
 // Punto de entrada de la app. La base de datos ya NO es un archivo local —
 // es Turso (libSQL) en modo remoto, compartida por todos los dispositivos
 // (ver plan de la sesión). Cada PC guarda su propia URL/token en un
@@ -38,6 +49,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let handle = app.handle().clone();
 
@@ -72,6 +84,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            guardar_archivo,
             db::db_select,
             db::db_select_cache,
             db::db_execute,
@@ -84,6 +97,9 @@ pub fn run() {
             comandos::listar_ventas_stock_pendiente,
             comandos::guardar_nota_cajero_stock,
             comandos::resolver_stock_pendiente,
+            comandos::enviar_factura_a_revision,
+            comandos::listar_facturas_en_revision,
+            comandos::resolver_revision_factura,
             comandos::editar_venta_items,
             comandos::editar_venta_pagos,
             comandos::eliminar_venta,
@@ -92,6 +108,7 @@ pub fn run() {
             comandos::registrar_abono_cliente_total,
             comandos::registrar_pago_proveedor,
             comandos::ajustar_factura_compra,
+            comandos::registrar_nota_credito_compra,
             comandos::cambiar_proveedor_factura_compra,
             comandos::registrar_consumo_interno,
             comandos::guardar_factura_compra,

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-guardar-archivo"
+description = "Enables the guardar_archivo command without any pre-configured scope."
+commands.allow = ["guardar_archivo"]
+
+[[permission]]
+identifier = "deny-guardar-archivo"
+description = "Denies the guardar_archivo command without any pre-configured scope."
+commands.deny = ["guardar_archivo"]

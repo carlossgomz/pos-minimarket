@@ -6,7 +6,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { getVersion } from "@tauri-apps/api/app";
 import { open } from "@tauri-apps/plugin-shell";
 import { getDb } from "./db";
-import { ConfigRow, Usuario, Vendedor, VentaItemStockPendiente } from "./types";
+import { ConfigRow, RevisionFactura, Usuario, Vendedor, VentaItemStockPendiente } from "./types";
 import ConfiguracionSync from "./screens/ConfiguracionSync";
 import Venta from "./screens/Venta";
 import Inventario from "./screens/Inventario";
@@ -26,6 +26,7 @@ import ActualizacionDisponible from "./screens/ActualizacionDisponible";
 import Notificaciones, { NotificacionItem } from "./screens/Notificaciones";
 import PendientesCodigoBarras from "./screens/PendientesCodigoBarras";
 import StockPendiente from "./screens/StockPendiente";
+import RevisionesFactura from "./screens/RevisionesFactura";
 import Configuracion from "./screens/Configuracion";
 import AsistenteLateral from "./AsistenteLateral";
 import { DestinoConsejo } from "./asistente";
@@ -348,6 +349,29 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [configSyncLista, usuarioActual]);
 
+  // Facturas que un cajero marcó para que un admin las revise (ej. "Esta
+  // factura está duplicada por favor revisar") — solo avisa a los admins,
+  // igual que el aviso de stock bajo de arriba.
+  const [revisionesFactura, setRevisionesFactura] = useState<RevisionFactura[]>([]);
+  const [mostrarRevisionesFactura, setMostrarRevisionesFactura] = useState(false);
+  const [ventaIdAbrirEnFacturas, setVentaIdAbrirEnFacturas] = useState<string | null>(null);
+
+  async function cargarRevisionesFactura() {
+    try {
+      setRevisionesFactura(await invoke<RevisionFactura[]>("listar_facturas_en_revision"));
+    } catch {
+      // si falla, se reintenta solo en el próximo ciclo
+    }
+  }
+
+  useEffect(() => {
+    if (!configSyncLista || usuarioActual?.rol !== "ADMIN") return;
+    cargarRevisionesFactura();
+    const id = setInterval(cargarRevisionesFactura, 20_000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [configSyncLista, usuarioActual]);
+
   // Pedidos de delivery recién llegados sin revisar (ver delivery.rs, tarea
   // de fondo cada ~30s) — visible para CUALQUIER rol logueado (admin y
   // cajero): quien esté físicamente en la tienda tiene que enterarse,
@@ -561,19 +585,19 @@ export default function App() {
   const vendedorActual = vendedores.find((v) => v.id === config.vendedor_actual_id) ?? null;
   const esAdmin = usuarioActual.rol === "ADMIN";
 
-  const TODAS_LAS_PESTANAS: { key: Tab; label: string }[] = [
-    { key: "venta", label: "Venta" },
-    { key: "cuentas", label: "Cuentas" },
-    { key: "facturas", label: "Facturas" },
-    { key: "movimientos", label: "Movimientos" },
-    { key: "inventario", label: "Inventario" },
-    { key: "cuadre", label: "Cuadre de caja" },
-    { key: "compras", label: "Compras" },
-    { key: "clientes", label: "Clientes" },
-    { key: "proveedores", label: "Proveedores" },
-    { key: "reportes", label: "Reportes" },
-    { key: "estadisticas", label: "Estadísticas" },
-    { key: "usuarios", label: "Usuarios" },
+  const TODAS_LAS_PESTANAS: { key: Tab; label: string; icono: string }[] = [
+    { key: "venta", label: "Venta", icono: "🛒" },
+    { key: "cuentas", label: "Cuentas", icono: "👥" },
+    { key: "facturas", label: "Facturas", icono: "🧾" },
+    { key: "movimientos", label: "Movimientos", icono: "🔄" },
+    { key: "inventario", label: "Inventario", icono: "📦" },
+    { key: "cuadre", label: "Cuadre de caja", icono: "🏦" },
+    { key: "compras", label: "Compras", icono: "📥" },
+    { key: "clientes", label: "Clientes", icono: "🧑‍🤝‍🧑" },
+    { key: "proveedores", label: "Proveedores", icono: "🚚" },
+    { key: "reportes", label: "Reportes", icono: "📈" },
+    { key: "estadisticas", label: "Estadísticas", icono: "📊" },
+    { key: "usuarios", label: "Usuarios", icono: "🧑‍💼" },
   ];
   const pestanasVisibles = esAdmin
     ? TODAS_LAS_PESTANAS
@@ -628,6 +652,14 @@ export default function App() {
       onClick: () => {},
     });
   }
+  if (esAdmin && revisionesFactura.length > 0) {
+    notificaciones.push({
+      key: "revisiones-factura",
+      texto: `🧾 ${revisionesFactura.length} factura${revisionesFactura.length === 1 ? "" : "s"} por revisar`,
+      color: "var(--danger-text)",
+      onClick: () => setMostrarRevisionesFactura(true),
+    });
+  }
   if (actualizacion) {
     notificaciones.push({
       key: "actualizacion",
@@ -642,6 +674,30 @@ export default function App() {
 
   return (
     <div className="page">
+      <aside className="sidebar">
+        <div className="sidebar-marca">
+          <img src={config.logo_base64 ?? logo} alt={config.nombre_negocio} className="sidebar-logo" />
+          <span className="sidebar-nombre">{config.nombre_negocio}</span>
+        </div>
+        <nav className="sidebar-nav">
+          {pestanasVisibles.map((p) => (
+            <button
+              key={p.key}
+              type="button"
+              className={"sidebar-link" + (tabEfectivo === p.key ? " sidebar-link-activo" : "")}
+              onClick={() => {
+                if (p.key !== "inventario") setAbrirInventarioFiltrado(false);
+                setTab(p.key);
+              }}
+            >
+              <span className="sidebar-link-icono">{p.icono}</span>
+              {p.label}
+            </button>
+          ))}
+        </nav>
+      </aside>
+      <div className="contenido-flex">
+        <div className="contenido-interior">
       <header className="header">
         <button
           type="button"
@@ -651,7 +707,6 @@ export default function App() {
         >
           ⚙
         </button>
-        <img src={config.logo_base64 ?? logo} alt={config.nombre_negocio} className="logo-header" />
         <div className="tasa">
           <label>Vendedor</label>
           {!mostrarNuevoVendedor ? (
@@ -743,21 +798,6 @@ export default function App() {
         </div>
       </header>
 
-      <nav className="tabs">
-        {pestanasVisibles.map((p) => (
-          <button
-            key={p.key}
-            className={tabEfectivo === p.key ? "tab-activo" : ""}
-            onClick={() => {
-              if (p.key !== "inventario") setAbrirInventarioFiltrado(false);
-              setTab(p.key);
-            }}
-          >
-            {p.label}
-          </button>
-        ))}
-      </nav>
-
       {/* Venta se mantiene siempre montado (solo se oculta con CSS) para
           que los tickets abiertos y el consumo interno del día no se
           pierdan al pasar a otra pestaña — si se desmontara como el resto,
@@ -803,7 +843,14 @@ export default function App() {
       {esAdmin && tabEfectivo === "reportes" && <Reportes config={config} />}
       {esAdmin && tabEfectivo === "estadisticas" && <Estadisticas config={config} />}
       <div style={{ display: tabEfectivo === "facturas" ? "block" : "none" }}>
-        <Facturas config={config} esAdmin={esAdmin} visible={tabEfectivo === "facturas"} />
+        <Facturas
+          config={config}
+          esAdmin={esAdmin}
+          visible={tabEfectivo === "facturas"}
+          usuarioNombre={usuarioActual.nombre}
+          ventaIdAbrir={ventaIdAbrirEnFacturas}
+          onVentaIdAbrirConsumido={() => setVentaIdAbrirEnFacturas(null)}
+        />
       </div>
 
       {mostrarPendientesCodigo && (
@@ -831,6 +878,25 @@ export default function App() {
           }}
         />
       )}
+      {mostrarRevisionesFactura && (
+        <RevisionesFactura
+          items={revisionesFactura}
+          onCerrar={() => setMostrarRevisionesFactura(false)}
+          onVerFactura={(ventaId) => {
+            setMostrarRevisionesFactura(false);
+            setTab("facturas");
+            setVentaIdAbrirEnFacturas(ventaId);
+          }}
+          onResolver={async (id) => {
+            await invoke("resolver_revision_factura", {
+              id,
+              adminUsuario: usuarioActual.nombre,
+              fechaHora: new Date().toISOString(),
+            });
+            await cargarRevisionesFactura();
+          }}
+        />
+      )}
       {mostrarConfiguracion && (
         <Configuracion
           config={config}
@@ -852,6 +918,8 @@ export default function App() {
       )}
       <AsistenteLateral esAdmin={esAdmin} tasa={config.tasa_cambio_dia} onNavegar={alNavegarDesdeAsistente} />
       <div className="marca-dev">hecho por Carloscode_</div>
+        </div>
+      </div>
     </div>
   );
 }

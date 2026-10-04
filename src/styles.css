@@ -6,6 +6,8 @@
   color-scheme: light;
   font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
 
+  --sidebar-w: 220px;
+
   --bg: #f1efe8;
   --bg-card: #fff;
   --bg-input: #fff;
@@ -85,21 +87,119 @@ body {
   color: var(--text);
 }
 
+/* Antes ".page" era la columna centrada de todo el programa (960px);
+   ahora es la fila completa (menú lateral + contenido) — lo que hacía
+   ".page" (ancho angosto, centrado, padding) pasó a ".contenido-interior",
+   que vive DENTRO de ".contenido-flex" (el hueco que le queda a la
+   derecha del menú). */
 .page {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidebar {
+  width: var(--sidebar-w);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-card);
+  border-right: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+
+.sidebar-marca {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.sidebar-logo {
+  height: 34px;
+  width: auto;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.sidebar-nombre {
+  font-weight: 600;
+  font-size: 13px;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px;
+  overflow-y: auto;
+}
+
+.sidebar-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-weight: 500;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.sidebar-link:hover {
+  background: var(--accent-soft-bg);
+}
+.sidebar-link-activo,
+.sidebar-link-activo:hover {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+.sidebar-link-icono {
+  font-size: 15px;
+  line-height: 1;
+  flex-shrink: 0;
+  width: 18px;
+  text-align: center;
+}
+
+.contenido-flex {
+  flex: 1;
+  min-width: 0;
+}
+
+.contenido-interior {
   max-width: 960px;
   margin: 0 auto;
   padding: 24px;
 }
 
-/* --- Sección que se sale del ancho angosto de .page (960px) para tablas
-   con muchas columnas, como el catálogo de Inventario — así todo el
-   contenido cabe sin necesidad de scroll horizontal en vez de apretar las
-   columnas hasta hacerlas ilegibles. */
+/* --- Sección que se sale del ancho angosto de .contenido-interior (960px)
+   para tablas con muchas columnas, como el catálogo de Inventario — así
+   todo el contenido cabe sin necesidad de scroll horizontal en vez de
+   apretar las columnas hasta hacerlas ilegibles. Se resta el ancho del
+   menú lateral porque ahora el "viewport completo" ya no es el área
+   disponible — ver la cuenta en el commit que agregó el menú lateral.
+   A PROPÓSITO sin "transform" (antes tenía position:relative + left:50% +
+   transform:translateX(-50%), matemáticamente equivalente a esto) — un
+   transform en un ancestro vuelve a ESE elemento el "contenedor" de
+   cualquier position:fixed/absolute adentro, y rompía silenciosamente la
+   impresión: ".imprimible" (position:absolute, ver @media print abajo)
+   quedaba posicionado relativo a esta sección en vez de a la hoja
+   completa, así que las hojas salían en blanco. Con margin-left en vez de
+   transform se logra el mismo ancho sin ese efecto secundario. */
 .seccion-ancha {
-  width: 100vw;
-  position: relative;
-  left: 50%;
-  transform: translateX(-50%);
+  width: calc(100vw - var(--sidebar-w));
+  margin-left: calc(50% - (100vw - var(--sidebar-w)) / 2);
   max-width: 1400px;
   padding: 0 24px;
   box-sizing: border-box;
@@ -109,6 +209,38 @@ body {
 .tabla-compacta td {
   padding: 4px 5px;
   font-size: 12px;
+}
+
+/* Pantalla de inicio de sesión — vive ANTES de que exista el menú
+   lateral (todavía no hay sesión ni config completa de pestañas), así
+   que no puede usar ".page" (esa es ahora la fila menú+contenido de la
+   app ya logueada). Queda su propia columna centrada, como antes. */
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+}
+
+.login-tarjetas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.login-card {
+  width: 340px;
+  flex-shrink: 0;
+}
+
+.login-novedades {
+  width: 360px;
+  flex-shrink: 0;
+  max-height: 520px;
+  overflow-y: auto;
 }
 
 /* Sin flex-wrap acá a propósito: el botón de cerrar sesión (último hijo
@@ -589,14 +721,12 @@ th {
   background: var(--danger-soft-bg-hover);
 }
 
-/* --- Mascota Kax fija a la izquierda, acompañante en cualquier pestaña
-   (ver AsistenteLateral.tsx) — z-index por debajo del menú "⋮" de
+/* --- Mascota Kax — acompañante en cualquier pestaña (ver
+   AsistenteLateral.tsx). La posición (left/top/right/bottom) la pone el
+   componente inline según a qué borde la arrastró el usuario — acá solo
+   lo que no cambia con el borde. z-index por debajo del menú "⋮" de
    Inventario (50) para que ese menú siempre gane si llegaran a solaparse. */
 .kax-asistente-lateral {
-  position: fixed;
-  left: 14px;
-  top: 50%;
-  transform: translateY(-50%);
   z-index: 30;
   display: flex;
   align-items: center;
@@ -605,26 +735,35 @@ th {
 }
 
 .kax-asistente-mini {
-  position: fixed;
-  left: 14px;
-  top: 50%;
-  transform: translateY(-50%);
   z-index: 30;
   background: none;
   border: none;
   padding: 0;
-  cursor: pointer;
+  cursor: grab;
   opacity: 0.85;
   transition: opacity 0.15s;
 }
 .kax-asistente-mini:hover {
   opacity: 1;
 }
+.kax-asistente-mini:active {
+  cursor: grabbing;
+}
+
+/* La mascota en sí (no la burbuja ni los botones) es la que se agarra
+   para arrastrar el conjunto a otro borde de la pantalla. */
+.kax-asistente-agarre {
+  cursor: grab;
+  line-height: 0;
+}
+.kax-asistente-agarre:active {
+  cursor: grabbing;
+}
 
 .kax-asistente-cerrar {
   position: absolute;
   top: -8px;
-  left: 46px;
+  right: -8px;
   width: 20px;
   height: 20px;
   border-radius: 50%;
@@ -668,7 +807,8 @@ th {
 .kax-puntos {
   position: absolute;
   bottom: -18px;
-  left: 74px;
+  left: 50%;
+  transform: translateX(-50%);
   display: flex;
   gap: 5px;
 }

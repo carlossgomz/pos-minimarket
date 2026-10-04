@@ -97,6 +97,20 @@ export type VentaItemStockPendiente = {
   nota_cajero: string | null;
 };
 
+// Una factura que un cajero marcó para que un admin la revise (ej. "Esta
+// factura está duplicada por favor revisar") — ver
+// comandos::listar_facturas_en_revision.
+export type RevisionFactura = {
+  id: string;
+  venta_id: string;
+  numero_ticket: string;
+  fecha_hora: string;
+  cliente_nombre: string | null;
+  nota: string;
+  usuario: string;
+  created_at: string;
+};
+
 export type LineaCarrito = {
   producto_id: string;
   codigo_barra: string;
@@ -287,6 +301,12 @@ export type FacturaVentaResumen = {
   // distinta de fecha_hora (que es cuándo se DIO el crédito). Ver
   // "Crédito otorgado / Crédito pagado" en Facturas.tsx.
   fecha_ultimo_pago: string | null;
+  // Métodos reales de cobro, separados por coma — de "pagos" para una venta
+  // normal, o de "cobros_cliente" para una venta a crédito ya pagada (el
+  // método con el que el cliente terminó saldando la deuda, no "CREDITO").
+  // Antes esto no se veía en la lista y los créditos pagados quedaban
+  // invisibles al filtrar/revisar por método de pago.
+  metodos_pago: string | null;
 };
 
 export type FacturaVentaCompleta = {

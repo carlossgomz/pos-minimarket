@@ -27,6 +27,7 @@
     "allow-registrar-abono-cliente-total",
     "allow-registrar-pago-proveedor",
     "allow-ajustar-factura-compra",
+    "allow-registrar-nota-credito-compra",
     "allow-registrar-consumo-interno",
     "allow-guardar-factura-compra",
     "allow-editar-factura-compra",
@@ -34,6 +35,11 @@
     "allow-desglosar-producto",
     "allow-sincronizar-catalogo-delivery",
     "allow-obtener-pedidos-delivery-pendientes",
-    "shell:allow-open"
+    "allow-guardar-archivo",
+    "allow-enviar-factura-a-revision",
+    "allow-listar-facturas-en-revision",
+    "allow-resolver-revision-factura",
+    "shell:allow-open",
+    "dialog:allow-save"
   ]
 }

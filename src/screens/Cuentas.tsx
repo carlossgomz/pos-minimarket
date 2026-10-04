@@ -17,6 +17,7 @@ import EditorItemsVenta from "./EditorItemsVenta";
 import { normalizarTexto, sqlSinAcentos } from "../busqueda";
 import { fechaHoraVenezuela } from "../fecha";
 import { monedaDeMetodo } from "../precios";
+import { exportarExcel } from "../exportarExcel";
 
 const EPS = 0.01;
 // Comisión de delivery: $0.10 por cada producto entregado (por WhatsApp o
@@ -226,6 +227,22 @@ function CuentasPorCobrar({ config, esAdmin }: { config: ConfigRow; esAdmin: boo
 
   const totalGeneralUsd = clientes.reduce((acc, c) => acc + c.total_pendiente_usd, 0);
 
+  async function exportarClientes() {
+    await exportarExcel("cuentas_por_cobrar.xlsx", [
+      {
+        nombre: "Cuentas por cobrar",
+        columnas: ["Cliente", "Cédula", "Ventas a crédito", "Saldo USD", "Saldo Bs (hoy)"],
+        filas: clientes.map((c) => [
+          c.cliente_nombre,
+          c.cliente_cedula,
+          c.num_ventas,
+          c.total_pendiente_usd,
+          c.total_pendiente_usd * config.tasa_cambio_dia,
+        ]),
+      },
+    ]);
+  }
+
   return (
     <div className="card">
       <h2>Clientes con saldo pendiente</h2>
@@ -233,13 +250,16 @@ function CuentasPorCobrar({ config, esAdmin }: { config: ConfigRow; esAdmin: boo
         El saldo en bolívares se calcula a la tasa del día de hoy ({config.tasa_cambio_dia.toFixed(2)}{" "}
         Bs/$) — cambia solo si cambias la tasa arriba, no la de cada venta.
       </p>
-      <div className="totales" style={{ marginBottom: 12 }}>
+      <div className="totales" style={{ marginBottom: 12, justifyContent: "space-between" }}>
         <strong>
           Total pendiente de todos los clientes: USD {totalGeneralUsd.toFixed(2)}{" "}
           <span className="hint" style={{ margin: 0 }}>
             (Bs {(totalGeneralUsd * config.tasa_cambio_dia).toFixed(2)})
           </span>
         </strong>
+        <button type="button" className="link-btn" onClick={exportarClientes} disabled={clientes.length === 0}>
+          Exportar a Excel
+        </button>
       </div>
       <table>
         <thead>
@@ -443,6 +463,19 @@ function CuentasPorPagar({ config }: { config: ConfigRow }) {
   const [motivoAjuste, setMotivoAjuste] = useState("");
   const [mensajeAjuste, setMensajeAjuste] = useState<string | null>(null);
 
+  // Nota de crédito: a diferencia de "ajustar monto" (que solo corrige el
+  // total a mano), esto devuelve mercancía de verdad — rebaja el stock de
+  // cada producto elegido y de ahí calcula sola cuánto baja la factura, al
+  // costo con el que se compró ESA factura (no el costo de hoy).
+  const [facturaNotaCredito, setFacturaNotaCredito] = useState<FacturaPendiente | null>(null);
+  const [itemsFacturaCredito, setItemsFacturaCredito] = useState<
+    { producto_id: string; producto_nombre: string; costo_unitario_usd: number; cantidad_comprada: number }[]
+  >([]);
+  const [cantidadesCredito, setCantidadesCredito] = useState<Record<string, string>>({});
+  const [motivoNotaCredito, setMotivoNotaCredito] = useState("");
+  const [mensajeNotaCredito, setMensajeNotaCredito] = useState<string | null>(null);
+  const [guardandoNotaCredito, setGuardandoNotaCredito] = useState(false);
+
   async function cargarProveedores() {
     const db = await getDb();
     const rows = await db.select<ProveedorDeudor[]>(
@@ -587,7 +620,91 @@ function CuentasPorPagar({ config }: { config: ConfigRow }) {
     await recargarFacturasProveedor();
   }
 
+  async function empezarNotaCredito(f: FacturaPendiente) {
+    setFacturaNotaCredito(f);
+    setCantidadesCredito({});
+    setMotivoNotaCredito("");
+    setMensajeNotaCredito(null);
+    const db = await getDb();
+    const items = await db.select<
+      { producto_id: string; producto_nombre: string; costo_unitario_usd: number; cantidad_comprada: number }[]
+    >(
+      `SELECT ifc.producto_id, p.nombre as producto_nombre, ifc.costo_unitario_usd, ifc.cantidad as cantidad_comprada
+       FROM items_factura_compra ifc JOIN productos p ON p.id = ifc.producto_id
+       WHERE ifc.factura_compra_id = $1
+       ORDER BY p.nombre`,
+      [f.id]
+    );
+    setItemsFacturaCredito(items);
+  }
+
+  const montoNotaCreditoUsd = itemsFacturaCredito.reduce((acc, it) => {
+    const cant = Number(cantidadesCredito[it.producto_id] || "0");
+    return acc + (cant > 0 ? cant * it.costo_unitario_usd : 0);
+  }, 0);
+
+  async function confirmarNotaCredito() {
+    if (!facturaNotaCredito) return;
+    const items = itemsFacturaCredito
+      .map((it) => ({ producto_id: it.producto_id, cantidad: Number(cantidadesCredito[it.producto_id] || "0") }))
+      .filter((it) => it.cantidad > 0);
+    if (items.length === 0) {
+      setMensajeNotaCredito("Indica la cantidad de al menos un producto a acreditar.");
+      return;
+    }
+    if (!motivoNotaCredito.trim()) {
+      setMensajeNotaCredito("Indica el motivo de la nota de crédito.");
+      return;
+    }
+    if (
+      !window.confirm(
+        `¿Registrar esta nota de crédito por USD ${montoNotaCreditoUsd.toFixed(2)}? Esto rebaja el stock de los productos elegidos y el monto de la factura ${facturaNotaCredito.numero_factura}.`
+      )
+    ) {
+      return;
+    }
+    setGuardandoNotaCredito(true);
+    try {
+      await invoke("registrar_nota_credito_compra", {
+        input: {
+          id: crypto.randomUUID(),
+          factura_compra_id: facturaNotaCredito.id,
+          items,
+          motivo: motivoNotaCredito.trim(),
+          fecha_hora: fechaHoraVenezuela(),
+        },
+      });
+    } catch (e) {
+      setMensajeNotaCredito(`No se pudo registrar la nota de crédito: ${String(e)}`);
+      setGuardandoNotaCredito(false);
+      return;
+    }
+
+    setGuardandoNotaCredito(false);
+    setFacturaNotaCredito(null);
+    setItemsFacturaCredito([]);
+    setCantidadesCredito({});
+    setMotivoNotaCredito("");
+    await cargarProveedores();
+    await recargarFacturasProveedor();
+  }
+
   const totalGeneralUsd = proveedores.reduce((acc, p) => acc + p.total_pendiente_usd, 0);
+
+  async function exportarProveedores() {
+    await exportarExcel("cuentas_por_pagar.xlsx", [
+      {
+        nombre: "Cuentas por pagar",
+        columnas: ["Proveedor", "Facturas pendientes", "Saldo USD", "Saldo Bs (hoy)"],
+        filas: proveedores.map((p) => [
+          p.proveedor_nombre,
+          p.num_facturas,
+          p.total_pendiente_usd,
+          p.total_pendiente_usd * config.tasa_cambio_dia,
+        ]),
+      },
+    ]);
+  }
 
   return (
     <div className="card">
@@ -603,6 +720,9 @@ function CuentasPorPagar({ config }: { config: ConfigRow }) {
             (Bs {(totalGeneralUsd * config.tasa_cambio_dia).toFixed(2)})
           </span>
         </strong>
+        <button type="button" className="link-btn" onClick={exportarProveedores} disabled={proveedores.length === 0}>
+          Exportar a Excel
+        </button>
       </div>
       <table>
         <thead>
@@ -667,6 +787,9 @@ function CuentasPorPagar({ config }: { config: ConfigRow }) {
                                 </button>
                                 <button className="link-btn" onClick={() => empezarAjuste(f)}>
                                   ajustar monto
+                                </button>
+                                <button className="link-btn" onClick={() => empezarNotaCredito(f)}>
+                                  nota de crédito
                                 </button>
                               </td>
                             </tr>
@@ -759,6 +882,75 @@ function CuentasPorPagar({ config }: { config: ConfigRow }) {
             </button>
           </div>
           {mensajeAjuste && <p className="error">{mensajeAjuste}</p>}
+        </div>
+      )}
+
+      {facturaNotaCredito && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <h2>Nota de crédito — factura {facturaNotaCredito.numero_factura}</h2>
+          <p className="hint">
+            Para cuando de verdad se devuelve mercancía al proveedor: indica cuánto se devuelve de cada
+            producto — el stock baja solo y el monto de la factura se recalcula al costo con el que se
+            compró esta factura.
+          </p>
+          {itemsFacturaCredito.length === 0 ? (
+            <p className="hint">Esta factura no tiene productos registrados.</p>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>Producto</th>
+                  <th>Comprado</th>
+                  <th>Costo unit. USD</th>
+                  <th>Cantidad a acreditar</th>
+                </tr>
+              </thead>
+              <tbody>
+                {itemsFacturaCredito.map((it) => (
+                  <tr key={it.producto_id}>
+                    <td>{it.producto_nombre}</td>
+                    <td>{it.cantidad_comprada}</td>
+                    <td>{it.costo_unitario_usd.toFixed(2)}</td>
+                    <td>
+                      <input
+                        type="number"
+                        min={0}
+                        max={it.cantidad_comprada}
+                        step="1"
+                        style={{ width: 90 }}
+                        value={cantidadesCredito[it.producto_id] ?? ""}
+                        onChange={(e) =>
+                          setCantidadesCredito((prev) => ({ ...prev, [it.producto_id]: e.target.value }))
+                        }
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <p style={{ fontWeight: 600, marginTop: 10 }}>Total a acreditar: USD {montoNotaCreditoUsd.toFixed(2)}</p>
+          <div className="form-row">
+            <input
+              placeholder="Motivo (ej. producto dañado/vencido)"
+              value={motivoNotaCredito}
+              onChange={(e) => setMotivoNotaCredito(e.target.value)}
+              style={{ flex: 2 }}
+            />
+            <button onClick={confirmarNotaCredito} disabled={guardandoNotaCredito}>
+              {guardandoNotaCredito ? "Guardando…" : "Confirmar nota de crédito"}
+            </button>
+            <button
+              className="link-btn"
+              onClick={() => {
+                setFacturaNotaCredito(null);
+                setItemsFacturaCredito([]);
+              }}
+            >
+              cancelar
+            </button>
+          </div>
+          {mensajeNotaCredito && <p className="error">{mensajeNotaCredito}</p>}
         </div>
       )}
     </div>

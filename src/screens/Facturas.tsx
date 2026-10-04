@@ -16,6 +16,7 @@ import { fechaHoraVenezuela } from "../fecha";
 import logo from "../assets/logo.png";
 import EditorItemsVenta from "./EditorItemsVenta";
 import EditorPagosVenta from "./EditorPagosVenta";
+import { exportarExcel } from "../exportarExcel";
 
 function hoyISO() {
   return fechaHoraVenezuela().slice(0, 10);
@@ -25,10 +26,19 @@ export default function Facturas({
   config,
   esAdmin,
   visible,
+  usuarioNombre,
+  ventaIdAbrir,
+  onVentaIdAbrirConsumido,
 }: {
   config: ConfigRow;
   esAdmin: boolean;
   visible: boolean;
+  usuarioNombre: string;
+  // Para abrir una factura puntual desde afuera (ej. desde el aviso de
+  // "facturas por revisar" en App.tsx) sin que el admin tenga que buscarla
+  // a mano.
+  ventaIdAbrir?: string | null;
+  onVentaIdAbrirConsumido?: () => void;
 }) {
   const [desde, setDesde] = useState(hoyISO());
   const [hasta, setHasta] = useState(hoyISO());
@@ -41,10 +51,15 @@ export default function Facturas({
   const [items, setItems] = useState<FacturaVentaItemDetalle[]>([]);
   const [itemsEditables, setItemsEditables] = useState<FacturaVentaItemEditable[]>([]);
   const [pagos, setPagos] = useState<FacturaVentaPagoDetalle[]>([]);
+  const [cobros, setCobros] = useState<{ metodo: string | null; monto_bs: number; created_at: string }[]>([]);
   const [editandoItems, setEditandoItems] = useState(false);
   const [editandoPagos, setEditandoPagos] = useState(false);
   const [mensajeEliminar, setMensajeEliminar] = useState<string | null>(null);
   const [repartidores, setRepartidores] = useState<Repartidor[]>([]);
+  const [mostrarRevision, setMostrarRevision] = useState(false);
+  const [notaRevision, setNotaRevision] = useState("");
+  const [enviandoRevision, setEnviandoRevision] = useState(false);
+  const [mensajeRevision, setMensajeRevision] = useState<string | null>(null);
 
   const detalleRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -67,7 +82,15 @@ export default function Facturas({
     let filtroMetodo = "";
     if (metodoFiltro) {
       params.push(metodoFiltro);
-      filtroMetodo = `AND id IN (SELECT venta_id FROM pagos WHERE metodo = $${params.length})`;
+      // Union con cobros_cliente: una venta a crédito ya pagada tiene su
+      // pago "de verdad" ahí, no en pagos (que para ella siempre dice
+      // literal 'CREDITO') — sin esto, filtrar por ej. "Pago móvil" no
+      // mostraba los créditos que se terminaron cobrando por pago móvil.
+      filtroMetodo = `AND id IN (
+        SELECT venta_id FROM pagos WHERE metodo = $${params.length}
+        UNION
+        SELECT venta_id FROM cobros_cliente WHERE metodo = $${params.length}
+      )`;
     }
     let filtroCanal = "";
     if (canalFiltro) {
@@ -80,7 +103,12 @@ export default function Facturas({
     // hoy, filtrar "hoy" la sigue mostrando. Ver fecha_ultimo_pago abajo.
     const rows = await db.select<FacturaVentaResumen[]>(
       `SELECT id, numero_ticket, fecha_hora, cliente_nombre, cliente_cedula, vendedor_nombre, total_bs, estado, canal, repartidor_id,
-              (SELECT MAX(created_at) FROM cobros_cliente WHERE venta_id = ventas.id) as fecha_ultimo_pago
+              (SELECT MAX(created_at) FROM cobros_cliente WHERE venta_id = ventas.id) as fecha_ultimo_pago,
+              (SELECT GROUP_CONCAT(DISTINCT metodo) FROM (
+                 SELECT metodo FROM pagos WHERE venta_id = ventas.id AND metodo != 'CREDITO'
+                 UNION
+                 SELECT metodo FROM cobros_cliente WHERE venta_id = ventas.id
+               )) as metodos_pago
        FROM ventas
        WHERE (
          date(fecha_hora) BETWEEN $1 AND $2
@@ -94,6 +122,29 @@ export default function Facturas({
       params
     );
     setFacturas(rows);
+  }
+
+  // Exporta exactamente lo que se está viendo en pantalla (mismo rango de
+  // fechas y filtros aplicados) — así el Excel coincide con lo que el
+  // usuario ya revisó, sin tener que repetir la consulta.
+  async function exportarFacturas() {
+    await exportarExcel(`facturas_${desde}_a_${hasta}.xlsx`, [
+      {
+        nombre: "Facturas",
+        columnas: ["Ticket", "Fecha", "Cliente", "Cédula", "Vendedor", "Total Bs", "Método", "Estado", "Canal"],
+        filas: facturas.map((f) => [
+          f.numero_ticket,
+          formatearFechaHora(f.fecha_hora),
+          f.cliente_nombre ?? "Consumidor final",
+          f.cliente_cedula ?? "",
+          f.vendedor_nombre ?? "",
+          f.total_bs,
+          f.metodos_pago ? f.metodos_pago.split(",").join(", ") : f.estado === "CREDITO_PENDIENTE" ? "Crédito (pendiente)" : "",
+          f.estado,
+          f.canal,
+        ]),
+      },
+    ]);
   }
 
   // Debounce — evita una consulta por cada letra tecleada en la búsqueda.
@@ -112,6 +163,9 @@ export default function Facturas({
   }, [visible]);
 
   async function abrirFactura(id: string) {
+    setMostrarRevision(false);
+    setNotaRevision("");
+    setMensajeRevision(null);
     const db = await getDb();
     const completa = await db.select<FacturaVentaCompleta[]>(
       `SELECT id, numero_ticket, fecha_hora, cliente_nombre, cliente_cedula, cliente_direccion, vendedor_nombre,
@@ -145,6 +199,45 @@ export default function Facturas({
       [id]
     );
     setPagos(pagoRows);
+
+    // Para créditos: el método real con el que el cliente pagó vive acá,
+    // no en "pagos" (ese siempre dice literal 'CREDITO' para esta venta).
+    const cobroRows = await db.select<{ metodo: string | null; monto_bs: number; created_at: string }[]>(
+      "SELECT metodo, monto_bs, created_at FROM cobros_cliente WHERE venta_id = $1 ORDER BY created_at",
+      [id]
+    );
+    setCobros(cobroRows);
+  }
+
+  useEffect(() => {
+    if (!ventaIdAbrir) return;
+    abrirFactura(ventaIdAbrir);
+    onVentaIdAbrirConsumido?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ventaIdAbrir]);
+
+  // Cualquier usuario (no solo admin) puede pedir que un admin revise una
+  // factura — ej. "Esta factura está duplicada por favor revisar". Avisa
+  // en la campana de notificaciones de los admins (ver App.tsx).
+  async function enviarARevision() {
+    if (!seleccionada || !notaRevision.trim()) return;
+    setEnviandoRevision(true);
+    setMensajeRevision(null);
+    try {
+      await invoke("enviar_factura_a_revision", {
+        id: crypto.randomUUID(),
+        ventaId: seleccionada.id,
+        nota: notaRevision.trim(),
+        usuario: usuarioNombre,
+        fechaHora: fechaHoraVenezuela(),
+      });
+      setNotaRevision("");
+      setMostrarRevision(false);
+    } catch (e) {
+      setMensajeRevision(`No se pudo enviar a revisión: ${String(e)}`);
+    } finally {
+      setEnviandoRevision(false);
+    }
   }
 
   // Corrige el método de pago (y la referencia) de una venta ya
@@ -245,6 +338,9 @@ export default function Facturas({
             <option value="DELIVERY">Solo delivery</option>
             <option value="TIENDA">Solo tienda (mostrador)</option>
           </select>
+          <button type="button" className="link-btn" onClick={exportarFacturas} disabled={facturas.length === 0}>
+            Exportar a Excel
+          </button>
         </div>
 
         <div style={{ maxHeight: 480, overflowY: "auto" }}>
@@ -256,6 +352,7 @@ export default function Facturas({
                 <th>Cliente</th>
                 <th>Vendedor</th>
                 <th>Total Bs</th>
+                <th>Método</th>
                 <th>Estado</th>
                 <th></th>
               </tr>
@@ -287,6 +384,15 @@ export default function Facturas({
                   <td>{f.cliente_nombre ?? "Consumidor final"}</td>
                   <td>{f.vendedor_nombre ?? "—"}</td>
                   <td>{f.total_bs.toFixed(2)}</td>
+                  <td>
+                    {f.estado === "CREDITO_PENDIENTE"
+                      ? "Crédito (pendiente)"
+                      : f.estado === "CREDITO_PAGADO"
+                        ? `Crédito → ${f.metodos_pago ? f.metodos_pago.split(",").map((m) => m.split("_").join(" ")).join(", ") : "—"}`
+                        : f.metodos_pago
+                          ? f.metodos_pago.split(",").map((m) => m.split("_").join(" ")).join(", ")
+                          : "—"}
+                  </td>
                   <td>{f.estado}</td>
                   <td>
                     <button className="link-btn" onClick={() => abrirFactura(f.id)}>
@@ -297,7 +403,7 @@ export default function Facturas({
               ))}
               {facturas.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="empty">
+                  <td colSpan={8} className="empty">
                     Sin facturas en este rango/búsqueda.
                   </td>
                 </tr>
@@ -353,6 +459,30 @@ export default function Facturas({
                 </select>
               </div>
             )}
+            <div className="no-print" style={{ marginBottom: 12 }}>
+              {!mostrarRevision ? (
+                <button type="button" className="link-btn" onClick={() => setMostrarRevision(true)}>
+                  Enviar a revisión
+                </button>
+              ) : (
+                <div className="form-row" style={{ alignItems: "flex-start" }}>
+                  <textarea
+                    className="cant-input"
+                    style={{ flex: 1, minHeight: 50 }}
+                    placeholder="Ej. Esta factura está duplicada por favor revisar"
+                    value={notaRevision}
+                    onChange={(e) => setNotaRevision(e.target.value)}
+                  />
+                  <button type="button" onClick={enviarARevision} disabled={enviandoRevision || !notaRevision.trim()}>
+                    {enviandoRevision ? "…" : "Enviar"}
+                  </button>
+                  <button type="button" className="link-btn" onClick={() => setMostrarRevision(false)}>
+                    cancelar
+                  </button>
+                </div>
+              )}
+              {mensajeRevision && <p className="error">{mensajeRevision}</p>}
+            </div>
             <table>
               <thead>
                 <tr>
@@ -410,9 +540,28 @@ export default function Facturas({
               )}
               {pagos.map((p) =>
                 p.metodo === "CREDITO" ? (
-                  <div key={p.id} className="form-row" style={{ alignItems: "center" }}>
-                    <span style={{ minWidth: 140 }}>Crédito pendiente</span>
-                    <span className="hint" style={{ margin: 0 }}>Bs {p.monto_bs.toFixed(2)}</span>
+                  <div key={p.id}>
+                    <div className="form-row" style={{ alignItems: "center" }}>
+                      <span style={{ minWidth: 140 }}>
+                        {cobros.length > 0 ? "Crédito otorgado" : "Crédito pendiente"}
+                      </span>
+                      <span className="hint" style={{ margin: 0 }}>Bs {p.monto_bs.toFixed(2)}</span>
+                    </div>
+                    {/* El método real con el que el cliente pagó vive en
+                        cobros_cliente, no acá — "pagos" siempre dice
+                        literal CREDITO para esta venta, pagada o no. Sin
+                        esto, una venta a crédito ya cobrada por ej. pago
+                        móvil pasaba desapercibida al revisar por método. */}
+                    {cobros.map((c, i) => (
+                      <div key={i} className="form-row" style={{ alignItems: "center" }}>
+                        <span style={{ minWidth: 140 }}>
+                          ↳ Cobrado por {c.metodo ? c.metodo.split("_").join(" ") : "—"}
+                        </span>
+                        <span className="hint" style={{ margin: 0 }}>
+                          Bs {c.monto_bs.toFixed(2)} — {formatearFechaHora(c.created_at)}
+                        </span>
+                      </div>
+                    ))}
                   </div>
                 ) : esAdmin && !editandoPagos ? (
                   <div key={p.id} className="form-row" style={{ alignItems: "center" }}>

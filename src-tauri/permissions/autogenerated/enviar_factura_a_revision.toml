@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-enviar-factura-a-revision"
+description = "Enables the enviar_factura_a_revision command without any pre-configured scope."
+commands.allow = ["enviar_factura_a_revision"]
+
+[[permission]]
+identifier = "deny-enviar-factura-a-revision"
+description = "Denies the enviar_factura_a_revision command without any pre-configured scope."
+commands.deny = ["enviar_factura_a_revision"]

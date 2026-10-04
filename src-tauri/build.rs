@@ -7,6 +7,7 @@ fn main() {
     tauri_build::try_build(
         tauri_build::Attributes::new().app_manifest(
             tauri_build::AppManifest::new().commands(&[
+                "guardar_archivo",
                 "db_select",
                 "db_execute",
                 "tiene_config_sync",
@@ -23,11 +24,15 @@ fn main() {
                 "registrar_abono_cliente_total",
                 "registrar_pago_proveedor",
                 "ajustar_factura_compra",
+                "registrar_nota_credito_compra",
                 "registrar_consumo_interno",
                 "guardar_factura_compra",
                 "editar_factura_compra",
                 "eliminar_factura_compra",
                 "desglosar_producto",
+                "enviar_factura_a_revision",
+                "listar_facturas_en_revision",
+                "resolver_revision_factura",
                 "db_select_cache",
                 "sincronizar_catalogo_delivery",
                 "obtener_pedidos_delivery_pendientes",

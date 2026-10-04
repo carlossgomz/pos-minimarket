@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-listar-facturas-en-revision"
+description = "Enables the listar_facturas_en_revision command without any pre-configured scope."
+commands.allow = ["listar_facturas_en_revision"]
+
+[[permission]]
+identifier = "deny-listar-facturas-en-revision"
+description = "Denies the listar_facturas_en_revision command without any pre-configured scope."
+commands.deny = ["listar_facturas_en_revision"]

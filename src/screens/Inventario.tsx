@@ -181,6 +181,35 @@ export default function Inventario({
   const [busqueda, setBusqueda] = useState("");
   const [categoriaFiltro, setCategoriaFiltro] = useState("");
   const [soloProblemas, setSoloProblemas] = useState(soloProblemasInicial ?? false);
+  // Qué columnas extra llevar a la hoja de "Imprimir lista para conteo" —
+  // Código/Nombre/Stock del sistema/columna en blanco para contar siempre
+  // van (es la razón de ser de la hoja); el resto es opcional porque a
+  // veces se imprime solo para contar y otras veces también hace falta
+  // ver precio o costo en el papel (ej. para revisar con un proveedor).
+  // Se recuerda por PC entre una impresión y la siguiente.
+  const CAMPOS_IMPRIMIR_KEY = "kaxa-inventario-campos-imprimir";
+  const [mostrarOpcionesImprimir, setMostrarOpcionesImprimir] = useState(false);
+  const [camposImprimir, setCamposImprimir] = useState<{
+    categoria: boolean;
+    costoUsd: boolean;
+    margen: boolean;
+    precioVenta: boolean;
+    stock: boolean;
+    columnaContar: boolean;
+  }>(() => {
+    try {
+      const guardado = localStorage.getItem(CAMPOS_IMPRIMIR_KEY);
+      if (guardado) return JSON.parse(guardado);
+    } catch {
+      // si el JSON guardado está corrupto, se usan los valores por defecto
+    }
+    return { categoria: true, costoUsd: false, margen: false, precioVenta: false, stock: true, columnaContar: true };
+  });
+  function actualizarCampoImprimir(campo: keyof typeof camposImprimir, valor: boolean) {
+    const nuevo = { ...camposImprimir, [campo]: valor };
+    setCamposImprimir(nuevo);
+    localStorage.setItem(CAMPOS_IMPRIMIR_KEY, JSON.stringify(nuevo));
+  }
   // Entradas/Salidas/Rentabilidad ocultas por defecto — son las que menos
   // se consultan día a día, y con ellas la tabla obligaba a hacer scroll
   // horizontal para ver hasta el final de cada fila.
@@ -682,7 +711,7 @@ export default function Inventario({
             >
               {sincronizandoDelivery ? "Sincronizando…" : "Sincronizar con delivery ahora"}
             </button>
-            <button type="button" className="no-print" onClick={() => window.print()}>
+            <button type="button" className="no-print" onClick={() => setMostrarOpcionesImprimir(true)}>
               Imprimir lista para conteo
             </button>
           </div>
@@ -952,9 +981,12 @@ export default function Inventario({
                 <tr>
                   <th>Código</th>
                   <th>Nombre</th>
-                  <th>Categoría</th>
-                  <th>Stock sistema</th>
-                  <th>Stock contado</th>
+                  {camposImprimir.categoria && <th>Categoría</th>}
+                  {camposImprimir.costoUsd && <th>Costo USD</th>}
+                  {camposImprimir.margen && <th>Margen %</th>}
+                  {camposImprimir.precioVenta && <th>Venta USD</th>}
+                  {camposImprimir.stock && <th>Stock sistema</th>}
+                  {camposImprimir.columnaContar && <th>Stock contado</th>}
                 </tr>
               </thead>
               <tbody>
@@ -962,9 +994,12 @@ export default function Inventario({
                   <tr key={p.id}>
                     <td>{p.codigo_barra}</td>
                     <td>{p.nombre}</td>
-                    <td>{p.categoria_nombre ?? "—"}</td>
-                    <td>{p.stock_actual}</td>
-                    <td></td>
+                    {camposImprimir.categoria && <td>{p.categoria_nombre ?? "—"}</td>}
+                    {camposImprimir.costoUsd && <td>{p.costo_actual_usd.toFixed(2)}</td>}
+                    {camposImprimir.margen && <td>{(p.margen_porcentaje ?? 0).toFixed(0)}</td>}
+                    {camposImprimir.precioVenta && <td>{precioVentaUsd(p).toFixed(2)}</td>}
+                    {camposImprimir.stock && <td>{formatearStock(p.stock_actual)}</td>}
+                    {camposImprimir.columnaContar && <td></td>}
                   </tr>
                 ))}
               </tbody>
@@ -972,6 +1007,79 @@ export default function Inventario({
           </div>
         </section>
       </div>
+
+      {mostrarOpcionesImprimir && (
+        <div className="modal-fondo no-print" onMouseDown={() => setMostrarOpcionesImprimir(false)}>
+          <div className="modal-caja" onMouseDown={(e) => e.stopPropagation()} style={{ maxWidth: 380 }}>
+            <h2 style={{ marginTop: 0 }}>¿Qué columnas llevar a la hoja?</h2>
+            <p className="hint">Código, nombre y la categoría van siempre. Elige el resto.</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, margin: "14px 0" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={camposImprimir.categoria}
+                  onChange={(e) => actualizarCampoImprimir("categoria", e.target.checked)}
+                />
+                Categoría
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={camposImprimir.costoUsd}
+                  onChange={(e) => actualizarCampoImprimir("costoUsd", e.target.checked)}
+                />
+                Costo USD
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={camposImprimir.margen}
+                  onChange={(e) => actualizarCampoImprimir("margen", e.target.checked)}
+                />
+                Margen %
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={camposImprimir.precioVenta}
+                  onChange={(e) => actualizarCampoImprimir("precioVenta", e.target.checked)}
+                />
+                Precio de venta USD
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={camposImprimir.stock}
+                  onChange={(e) => actualizarCampoImprimir("stock", e.target.checked)}
+                />
+                Stock del sistema
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={camposImprimir.columnaContar}
+                  onChange={(e) => actualizarCampoImprimir("columnaContar", e.target.checked)}
+                />
+                Columna en blanco para anotar lo contado
+              </label>
+            </div>
+            <div className="form-row">
+              <button type="button" className="link-btn" onClick={() => setMostrarOpcionesImprimir(false)}>
+                cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMostrarOpcionesImprimir(false);
+                  setTimeout(() => window.print(), 50);
+                }}
+              >
+                Imprimir
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

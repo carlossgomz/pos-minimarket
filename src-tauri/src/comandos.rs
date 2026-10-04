@@ -546,6 +546,92 @@ pub async fn resolver_stock_pendiente(
     Ok(())
 }
 
+/// El cajero marca una factura para que un admin la revise, dejando una
+/// nota (ej. "Esta factura está duplicada por favor revisar"). No hace
+/// falta validar ningún rol: cualquier usuario puede pedir una revisión.
+#[tauri::command]
+pub async fn enviar_factura_a_revision(
+    app: tauri::AppHandle,
+    id: String,
+    venta_id: String,
+    nota: String,
+    usuario: String,
+    fecha_hora: String,
+) -> Result<(), String> {
+    let conn = conexion(&app).await?;
+    conn.execute(
+        "INSERT INTO revisiones_factura (id, venta_id, nota, usuario, estado, created_at) VALUES (?1, ?2, ?3, ?4, 'PENDIENTE', ?5)",
+        libsql::params![id, venta_id, nota, usuario, fecha_hora],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+pub struct RevisionFactura {
+    pub id: String,
+    pub venta_id: String,
+    pub numero_ticket: String,
+    pub fecha_hora: String,
+    pub cliente_nombre: Option<String>,
+    pub nota: String,
+    pub usuario: String,
+    pub created_at: String,
+}
+
+/// Todas las facturas pendientes de revisión — alimenta la campana de
+/// notificaciones de los admins (ver App.tsx), igual que
+/// listar_ventas_stock_pendiente.
+#[tauri::command]
+pub async fn listar_facturas_en_revision(app: tauri::AppHandle) -> Result<Vec<RevisionFactura>, String> {
+    let conn = conexion(&app).await?;
+    let mut filas = conn
+        .query(
+            "SELECT r.id, r.venta_id, v.numero_ticket, v.fecha_hora, v.cliente_nombre, r.nota, r.usuario, r.created_at
+             FROM revisiones_factura r
+             JOIN ventas v ON v.id = r.venta_id
+             WHERE r.estado = 'PENDIENTE'
+             ORDER BY r.created_at DESC",
+            (),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut resultado = Vec::new();
+    while let Some(fila) = filas.next().await.map_err(|e| e.to_string())? {
+        resultado.push(RevisionFactura {
+            id: fila.get(0).map_err(|e| e.to_string())?,
+            venta_id: fila.get(1).map_err(|e| e.to_string())?,
+            numero_ticket: fila.get(2).map_err(|e| e.to_string())?,
+            fecha_hora: fila.get(3).map_err(|e| e.to_string())?,
+            cliente_nombre: fila.get(4).map_err(|e| e.to_string())?,
+            nota: fila.get(5).map_err(|e| e.to_string())?,
+            usuario: fila.get(6).map_err(|e| e.to_string())?,
+            created_at: fila.get(7).map_err(|e| e.to_string())?,
+        });
+    }
+    Ok(resultado)
+}
+
+/// Cierra el caso — solo admin (se valida en el frontend, como el resto de
+/// los controles de admin de esta app).
+#[tauri::command]
+pub async fn resolver_revision_factura(
+    app: tauri::AppHandle,
+    id: String,
+    admin_usuario: String,
+    fecha_hora: String,
+) -> Result<(), String> {
+    let conn = conexion(&app).await?;
+    conn.execute(
+        "UPDATE revisiones_factura SET estado = 'RESUELTA', resuelta_por = ?1, resuelta_en = ?2 WHERE id = ?3",
+        libsql::params![admin_usuario, fecha_hora, id],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Reemplaza los productos/cantidades de una venta ya registrada — pensado
 /// para cuando la caja se equivocó al escanear algo (producto de más, de
 /// menos, o cantidad mal tecleada). Solo admin (se valida en el frontend,
@@ -1521,6 +1607,183 @@ pub async fn ajustar_factura_compra(app: tauri::AppHandle, input: AjustarFactura
             input.nuevo_monto_total_usd,
             input.motivo.trim().to_string(),
             ahora_venezuela(),
+        ],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    tx.commit().await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ItemNotaCreditoCompraInput {
+    producto_id: String,
+    cantidad: f64,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct RegistrarNotaCreditoCompraInput {
+    id: String,
+    factura_compra_id: String,
+    items: Vec<ItemNotaCreditoCompraInput>,
+    motivo: String,
+    fecha_hora: String,
+}
+
+/// Nota de crédito de un proveedor contra una factura ya registrada — a
+/// diferencia de ajustar_factura_compra (que solo corrige el monto a
+/// mano), esto es para cuando de verdad se devuelve mercancía: por cada
+/// producto, rebaja el stock (con su propio movimiento de salida, mismo
+/// consumir_stock_fifo que usa cualquier otra salida) y usa el costo
+/// unitario DE ESA FACTURA (no el costo_actual_usd de hoy) para calcular
+/// cuánto baja el monto a pagar — así stock y factura quedan
+/// sincronizados en una sola operación atómica, sin tener que calcular el
+/// descuento a mano como con "ajustar monto".
+#[tauri::command]
+pub async fn registrar_nota_credito_compra(app: tauri::AppHandle, input: RegistrarNotaCreditoCompraInput) -> Result<(), String> {
+    if input.items.is_empty() {
+        return Err("Agrega al menos un producto a la nota de crédito.".to_string());
+    }
+    if input.motivo.trim().is_empty() {
+        return Err("Indica el motivo de la nota de crédito.".to_string());
+    }
+    for item in &input.items {
+        if item.cantidad <= 0.0 {
+            return Err("La cantidad de cada producto debe ser mayor a 0.".to_string());
+        }
+    }
+
+    let conn = conexion(&app).await?;
+
+    // Idempotencia — mismo criterio que ajustar_stock_interna: si esta
+    // nota ya se guardó (reintento tras un corte justo después de
+    // confirmar), no se vuelve a rebajar stock ni el monto de la factura.
+    let ya_existe = conn
+        .query("SELECT 1 FROM notas_credito_compra WHERE id = ?1", libsql::params![input.id.clone()])
+        .await
+        .map_err(|e| e.to_string())?
+        .next()
+        .await
+        .map_err(|e| e.to_string())?;
+    if ya_existe.is_some() {
+        return Ok(());
+    }
+
+    let tx = conn.transaction().await.map_err(|e| e.to_string())?;
+
+    let fila = tx
+        .query(
+            "SELECT monto_total_usd, monto_pagado_usd FROM facturas_compra WHERE id = ?1",
+            libsql::params![input.factura_compra_id.clone()],
+        )
+        .await
+        .map_err(|e| e.to_string())?
+        .next()
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Esa factura no existe.".to_string())?;
+    let total_actual: f64 = fila.get(0).map_err(|e| e.to_string())?;
+    let pagado: f64 = fila.get(1).map_err(|e| e.to_string())?;
+
+    let mut monto_total_credito = 0.0_f64;
+
+    for item in &input.items {
+        let fila_item = tx
+            .query(
+                "SELECT costo_unitario_usd FROM items_factura_compra WHERE factura_compra_id = ?1 AND producto_id = ?2",
+                libsql::params![input.factura_compra_id.clone(), item.producto_id.clone()],
+            )
+            .await
+            .map_err(|e| e.to_string())?
+            .next()
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "Ese producto no está en esta factura.".to_string())?;
+        let costo_unitario: f64 = fila_item.get(0).map_err(|e| e.to_string())?;
+
+        let fila_stock = tx
+            .query("SELECT stock_actual FROM productos WHERE id = ?1", libsql::params![item.producto_id.clone()])
+            .await
+            .map_err(|e| e.to_string())?
+            .next()
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "Ese producto no existe.".to_string())?;
+        let stock_actual: f64 = fila_stock.get(0).map_err(|e| e.to_string())?;
+        if item.cantidad > stock_actual + EPS {
+            return Err(format!(
+                "No puedes acreditar {:.2} unidades: en stock solo quedan {:.2} (probablemente ya se vendieron o se movieron).",
+                item.cantidad, stock_actual
+            ));
+        }
+
+        tx.execute(
+            "UPDATE productos SET stock_actual = stock_actual - ?1 WHERE id = ?2",
+            libsql::params![item.cantidad, item.producto_id.clone()],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+        consumir_stock_fifo(&tx, &item.producto_id, item.cantidad).await?;
+
+        tx.execute(
+            "INSERT INTO movimientos_inventario (id, producto_id, tipo, cantidad, motivo, referencia, created_at)
+             VALUES (lower(hex(randomblob(16))), ?1, 'SALIDA', ?2, ?3, ?4, ?5)",
+            libsql::params![
+                item.producto_id.clone(),
+                item.cantidad,
+                format!("Nota de crédito: {}", input.motivo.trim()),
+                input.id.clone(),
+                input.fecha_hora.clone(),
+            ],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+        tx.execute(
+            "INSERT INTO items_nota_credito_compra (id, nota_credito_id, producto_id, cantidad, costo_unitario_usd)
+             VALUES (lower(hex(randomblob(16))), ?1, ?2, ?3, ?4)",
+            libsql::params![input.id.clone(), item.producto_id.clone(), item.cantidad, costo_unitario],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+        monto_total_credito += item.cantidad * costo_unitario;
+    }
+
+    let nuevo_total = total_actual - monto_total_credito;
+    if nuevo_total < pagado - EPS {
+        return Err(format!(
+            "Esta nota de crédito (USD {:.2}) dejaría la factura en USD {:.2}, por debajo de lo ya pagado (USD {:.2}) — ajusta el pago primero.",
+            monto_total_credito, nuevo_total, pagado
+        ));
+    }
+    let saldada = nuevo_total - pagado <= EPS;
+    let nuevo_estado = if saldada {
+        "PAGADA"
+    } else if pagado > EPS {
+        "PARCIAL"
+    } else {
+        "PENDIENTE"
+    };
+
+    tx.execute(
+        "UPDATE facturas_compra SET monto_total_usd = ?1, estado = ?2 WHERE id = ?3",
+        libsql::params![nuevo_total, nuevo_estado, input.factura_compra_id.clone()],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    tx.execute(
+        "INSERT INTO notas_credito_compra (id, factura_compra_id, monto_total_usd, motivo, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        libsql::params![
+            input.id.clone(),
+            input.factura_compra_id.clone(),
+            monto_total_credito,
+            input.motivo.trim().to_string(),
+            input.fecha_hora.clone(),
         ],
     )
     .await

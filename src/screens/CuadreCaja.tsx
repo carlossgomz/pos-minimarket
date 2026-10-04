@@ -247,11 +247,21 @@ export default function CuadreCaja({ config, visible }: { config: ConfigRow; vis
             const esperadoNativo = montoNativoDesdeBs(f.moneda, f.esperado, tasa);
             const contadoNum = Number(f.contado || "0");
             const diff = f.contado === "" ? null : contadoNum - esperadoNativo;
+            // El (USD ...) al lado solo tiene sentido para las filas en Bs
+            // — las que ya están en dólares (DIVISAS) se verían raro con
+            // su propio equivalente repetido al lado.
+            const conUsd = f.moneda !== "USD";
             return (
               <tr key={f.metodo}>
                 <td>{f.metodo.split("_").join(" ")}</td>
                 <td>
                   {simbolo} {esperadoNativo.toFixed(2)}
+                  {conUsd && (
+                    <span className="hint" style={{ margin: 0 }}>
+                      {" "}
+                      (USD {(esperadoNativo / tasa).toFixed(2)})
+                    </span>
+                  )}
                 </td>
                 <td>
                   <input
@@ -264,9 +274,22 @@ export default function CuadreCaja({ config, visible }: { config: ConfigRow; vis
                     placeholder={`0.00 ${simbolo}`}
                     disabled={!esHoy}
                   />
+                  {conUsd && f.contado !== "" && (
+                    <span className="hint" style={{ margin: 0 }}>
+                      {" "}
+                      (USD {(contadoNum / tasa).toFixed(2)})
+                    </span>
+                  )}
                 </td>
                 <td className={diff && Math.abs(diff) > 0.01 ? "restante-pendiente" : ""}>
-                  {diff === null ? "—" : `${simbolo} ${diff.toFixed(2)}`}
+                  {diff === null ? (
+                    "—"
+                  ) : (
+                    <>
+                      {simbolo} {diff.toFixed(2)}
+                      {conUsd && ` (USD ${(diff / tasa).toFixed(2)})`}
+                    </>
+                  )}
                 </td>
               </tr>
             );
@@ -309,8 +332,18 @@ export default function CuadreCaja({ config, visible }: { config: ConfigRow; vis
         {tablaFilas(ingresos)}
         <div className="totales" style={{ flexDirection: "column", alignItems: "stretch", gap: 4 }}>
           <div className="form-row" style={{ justifyContent: "space-between" }}>
-            <span>Total esperado en Bs: Bs {totalEsperadoBs.toFixed(2)}</span>
-            <span>Total contado en Bs: Bs {totalContadoBsNativo.toFixed(2)}</span>
+            <span>
+              Total esperado en Bs: Bs {totalEsperadoBs.toFixed(2)}{" "}
+              <span className="hint" style={{ margin: 0 }}>
+                (USD {(totalEsperadoBs / tasa).toFixed(2)})
+              </span>
+            </span>
+            <span>
+              Total contado en Bs: Bs {totalContadoBsNativo.toFixed(2)}{" "}
+              <span className="hint" style={{ margin: 0 }}>
+                (USD {(totalContadoBsNativo / tasa).toFixed(2)})
+              </span>
+            </span>
           </div>
           {filasUsd.length > 0 && (
             <div className="form-row" style={{ justifyContent: "space-between" }}>
@@ -319,8 +352,18 @@ export default function CuadreCaja({ config, visible }: { config: ConfigRow; vis
             </div>
           )}
           <div className="form-row" style={{ justifyContent: "space-between" }}>
-            <strong>Total estimado en bolívares: Bs {totalEsperadoBolivares.toFixed(2)}</strong>
-            <strong>Total contado en bolívares: Bs {totalContadoBolivares.toFixed(2)}</strong>
+            <strong>
+              Total estimado en bolívares: Bs {totalEsperadoBolivares.toFixed(2)}{" "}
+              <span style={{ fontWeight: 400 }} className="hint">
+                (USD {(totalEsperadoBolivares / tasa).toFixed(2)})
+              </span>
+            </strong>
+            <strong>
+              Total contado en bolívares: Bs {totalContadoBolivares.toFixed(2)}{" "}
+              <span style={{ fontWeight: 400 }} className="hint">
+                (USD {(totalContadoBolivares / tasa).toFixed(2)})
+              </span>
+            </strong>
           </div>
         </div>
       </div>

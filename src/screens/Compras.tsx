@@ -1421,7 +1421,6 @@ export default function Compras({
           {guardando ? "Guardando…" : editandoFacturaId ? "Guardar cambios de la factura" : "Guardar factura"}
         </button>
       </div>
-      </div>
 
       <div className="card">
         <h2>Facturas registradas</h2>
@@ -1545,6 +1544,7 @@ export default function Compras({
             </tbody>
           </table>
         </div>
+      </div>
       </div>
 
       {facturaCambiarProveedor && (

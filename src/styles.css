@@ -923,7 +923,19 @@ th {
    (catálogo, reportes) en vez de reemplazarla — por eso está oculta en
    pantalla y solo aparece dentro de @media print. Impreso siempre en
    claro/blanco (no tiene sentido gastar tinta imitando el tema oscuro de
-   pantalla), sin importar el tema activo. */
+   pantalla), sin importar el tema activo.
+
+   OJO con el orden: esta regla de "oculto en pantalla" tiene que ir ANTES
+   del bloque @media print, no después — con la misma especificidad
+   (0,0,1,0) en los dos lugares, css aplica la que aparece último en el
+   archivo sin importar que una esté adentro de una media query y la otra
+   no. Si esta regla quedara después del @media print (como estuvo antes),
+   le gana al "display: block" de ahí y TODAS las hojas salen en blanco al
+   imprimir, aunque todo lo demás (posición, visibilidad) esté bien. */
+.imprimible {
+  display: none;
+}
+
 @media print {
   body * {
     visibility: hidden;
@@ -965,10 +977,6 @@ th {
   .no-print {
     display: none !important;
   }
-}
-
-.imprimible {
-  display: none;
 }
 
 /* --- Pestañas de tickets abiertos (varias facturas a la vez) --- */

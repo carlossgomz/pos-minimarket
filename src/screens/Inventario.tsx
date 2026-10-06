@@ -6,6 +6,7 @@ import { Categoria, ConfigRow, ProductoInventario } from "../types";
 import { estadoStock, formatearStock, gananciaUnitariaUsd, precioVentaBsHoy, precioVentaUsd } from "../precios";
 import { fechaHoraVenezuela } from "../fecha";
 import { normalizarTexto, sqlSinAcentos } from "../busqueda";
+import { exportarExcel } from "../exportarExcel";
 
 // Menú "⋮" para las acciones menos usadas de cada producto — antes eran 4
 // botones de texto apilados en la celda (uno por línea, ver "no rastrear
@@ -342,6 +343,55 @@ export default function Inventario({
     () => productosFiltrados.slice(pagina * TAMANO_PAGINA, (pagina + 1) * TAMANO_PAGINA),
     [productosFiltrados, pagina]
   );
+
+  // Exporta TODAS las columnas (no solo las que están visibles en pantalla
+  // ni las que se eligieron para la hoja de "imprimir para contar") y
+  // respeta el filtro/búsqueda activo, pero no la paginación — el Excel
+  // tiene que salir completo aunque la tabla en pantalla solo muestre 50
+  // productos a la vez.
+  async function exportarInventario() {
+    await exportarExcel("inventario.xlsx", [
+      {
+        nombre: "Inventario",
+        columnas: [
+          "Código",
+          "Nombre",
+          "Categoría",
+          "Costo USD",
+          "Margen %",
+          "Venta USD",
+          "Venta Bs (hoy)",
+          "Ganancia USD/u.",
+          "Rentabilidad %",
+          "Entradas",
+          "Salidas",
+          "Stock",
+          "Estado",
+          "Delivery",
+        ],
+        filas: productosFiltrados.map((p) => {
+          const rentabilidadPct = p.costo_actual_usd > 0 ? (gananciaUnitariaUsd(p) / p.costo_actual_usd) * 100 : 0;
+          const estado = estadoStock(p);
+          return [
+            p.codigo_barra,
+            p.nombre,
+            p.categoria_nombre ?? "",
+            p.costo_actual_usd,
+            p.margen_porcentaje ?? 0,
+            precioVentaUsd(p),
+            precioVentaBsHoy(p, config.tasa_cambio_dia),
+            gananciaUnitariaUsd(p),
+            Number(rentabilidadPct.toFixed(1)),
+            p.entradas_totales,
+            p.salidas_totales,
+            p.stock_actual,
+            estado + (p.activo ? "" : " / Inactivo"),
+            p.disponible_delivery ? "Sí" : "No",
+          ];
+        }),
+      },
+    ]);
+  }
 
   async function agregarProducto(e: React.FormEvent) {
     e.preventDefault();
@@ -736,6 +786,15 @@ export default function Inventario({
           </p>
           <button type="button" className="link-btn" style={{ marginBottom: 8 }} onClick={() => setMostrarMasColumnas((v) => !v)}>
             {mostrarMasColumnas ? "ocultar entradas/salidas/rentabilidad" : "mostrar entradas/salidas/rentabilidad"}
+          </button>{" "}
+          <button
+            type="button"
+            className="link-btn"
+            style={{ marginBottom: 8 }}
+            onClick={exportarInventario}
+            disabled={productosFiltrados.length === 0}
+          >
+            Exportar a Excel
           </button>
           <div style={{ overflowX: "auto" }}>
             <table className="tabla-compacta">

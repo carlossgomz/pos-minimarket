@@ -262,7 +262,7 @@ export async function obtenerConsejosGenerales(esAdmin: boolean, tasa: number): 
        JOIN venta_items vi ON vi.producto_id = p.id
        JOIN ventas v ON v.id = vi.venta_id
        WHERE p.activo = 1 AND p.uso_interno = 0 AND p.stock_minimo > 0 AND p.stock_actual <= p.stock_minimo
-         AND date(v.fecha_hora) >= $1
+         AND v.fecha_hora >= $1
        GROUP BY p.id ORDER BY ganancia_30d_bs DESC LIMIT 1`,
       [hace30dias]
     );
@@ -285,7 +285,7 @@ export async function obtenerConsejosGenerales(esAdmin: boolean, tasa: number): 
          AND p.created_at <= $1
          AND NOT EXISTS (
            SELECT 1 FROM venta_items vi JOIN ventas v ON v.id = vi.venta_id
-           WHERE vi.producto_id = p.id AND date(v.fecha_hora) >= $1
+           WHERE vi.producto_id = p.id AND v.fecha_hora >= $1
          )
        ORDER BY capital_usd DESC LIMIT 1`,
       [hace30dias]
@@ -305,24 +305,37 @@ export async function obtenerConsejosGenerales(esAdmin: boolean, tasa: number): 
   // mes-vs-mes-anterior, todo en una sola consulta (misma idea de Kaxa
   // Móvil, pero sin repetir 6 consultas separadas).
   const hoy = hoyVenezuela();
+  // mañana (límite superior de "hoy") en vez de date(fecha_hora) = hoy — ver
+  // el comentario grande más abajo sobre por qué todas estas comparaciones
+  // pasaron a ser por rango sobre la columna cruda.
+  const mañana = fechaISO(restarDias(hoyComoDate(), -1));
   const ayer = fechaISO(restarDias(hoyComoDate(), 1));
   const semanaInicio = fechaISO(restarDias(hoyComoDate(), 6));
   const semanaAnteriorInicio = fechaISO(restarDias(hoyComoDate(), 13));
   const mesInicio = primerDiaMes(0);
   const mesAnteriorInicio = primerDiaMes(-1);
+  // "fecha_hora >= X" en vez de "date(fecha_hora) >= X": envolver la columna
+  // en date() le impide a SQLite/Turso usar el índice idx_ventas_fecha_hora
+  // (no puede usar un índice normal para resolver una comparación sobre el
+  // RESULTADO de una función aplicada a la columna) — así que esta consulta
+  // escaneaba la tabla ventas COMPLETA cada 5 minutos en cada PC abierta, y
+  // Turso cuenta filas escaneadas, no devueltas. fecha_hora guarda
+  // "AAAA-MM-DD HH:MM:SS" (ver fechaHoraVenezuela en fecha.ts), así que un
+  // rango de cadenas [X, X+1dia) da exactamente lo mismo que date(.) = X,
+  // sin perder el índice.
   const [periodos] = await db.select<
     { hoy_bs: number; ayer_bs: number; semana_bs: number; semana_anterior_bs: number; mes_bs: number; mes_anterior_bs: number }[]
   >(
     `SELECT
-       SUM(CASE WHEN date(fecha_hora) = $1 THEN total_bs ELSE 0 END) as hoy_bs,
-       SUM(CASE WHEN date(fecha_hora) = $2 THEN total_bs ELSE 0 END) as ayer_bs,
-       SUM(CASE WHEN date(fecha_hora) >= $3 THEN total_bs ELSE 0 END) as semana_bs,
-       SUM(CASE WHEN date(fecha_hora) >= $4 AND date(fecha_hora) < $3 THEN total_bs ELSE 0 END) as semana_anterior_bs,
-       SUM(CASE WHEN date(fecha_hora) >= $5 THEN total_bs ELSE 0 END) as mes_bs,
-       SUM(CASE WHEN date(fecha_hora) >= $6 AND date(fecha_hora) < $5 THEN total_bs ELSE 0 END) as mes_anterior_bs
+       SUM(CASE WHEN fecha_hora >= $1 AND fecha_hora < $2 THEN total_bs ELSE 0 END) as hoy_bs,
+       SUM(CASE WHEN fecha_hora >= $3 AND fecha_hora < $1 THEN total_bs ELSE 0 END) as ayer_bs,
+       SUM(CASE WHEN fecha_hora >= $4 THEN total_bs ELSE 0 END) as semana_bs,
+       SUM(CASE WHEN fecha_hora >= $5 AND fecha_hora < $4 THEN total_bs ELSE 0 END) as semana_anterior_bs,
+       SUM(CASE WHEN fecha_hora >= $6 THEN total_bs ELSE 0 END) as mes_bs,
+       SUM(CASE WHEN fecha_hora >= $7 AND fecha_hora < $6 THEN total_bs ELSE 0 END) as mes_anterior_bs
      FROM ventas
-     WHERE date(fecha_hora) >= $6`,
-    [hoy, ayer, semanaInicio, semanaAnteriorInicio, mesInicio, mesAnteriorInicio]
+     WHERE fecha_hora >= $7`,
+    [hoy, mañana, ayer, semanaInicio, semanaAnteriorInicio, mesInicio, mesAnteriorInicio]
   );
   if (periodos) {
     const { hoy_bs, ayer_bs, semana_bs, semana_anterior_bs, mes_bs, mes_anterior_bs } = periodos;

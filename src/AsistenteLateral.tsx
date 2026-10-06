@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, CSSProperties } from "react";
 import KaxMascota, { PoseKax } from "./KaxMascota";
 import { Consejo, DestinoConsejo, obtenerConsejosGenerales } from "./asistente";
+import { useSondeoVisible } from "./useSondeoVisible";
 
 // Cada 5 minutos alcanza de sobra — son consejos, no algo que necesite
 // sentirse en tiempo real, y así se evita sumarle presión al límite de
@@ -87,12 +88,7 @@ export default function AsistenteLateral({
     }
   }
 
-  useEffect(() => {
-    cargar();
-    const id = setInterval(cargar, REFRESCO_MS);
-    return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [esAdmin]);
+  useSondeoVisible(cargar, REFRESCO_MS, true);
 
   function minimizar() {
     setMinimizado(true);

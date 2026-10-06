@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useSondeoVisible } from "./useSondeoVisible";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { check, Update } from "@tauri-apps/plugin-updater";
@@ -204,11 +205,7 @@ export default function App() {
   // tasa vieja hasta que alguien reiniciara el programa (pasó de verdad:
   // ventas registradas con una tasa desactualizada). Cada 20s, igual que
   // el resto de los avisos de fondo de esta pantalla.
-  useEffect(() => {
-    if (!configSyncLista) return;
-    const id = setInterval(() => cargarConfig(true), 20_000);
-    return () => clearInterval(id);
-  }, [configSyncLista]);
+  useSondeoVisible(() => cargarConfig(true), 20_000, configSyncLista, false);
 
   async function cargarVendedores() {
     const db = await getDb();
@@ -258,10 +255,16 @@ export default function App() {
     };
   }, [configSyncLista]);
 
+  // De la caché local (refrescada cada 60s, ver offline.rs), no de Turso —
+  // este aviso no necesita el dato al segundo, y así el sondeo cada 20s de
+  // esta pantalla (siempre montada mientras la app está abierta) no le
+  // cuesta ni una fila leída a Turso. El aviso puede tardar hasta ~1 min
+  // más en aparecer/desaparecer; ver cargarPendientesCodigoInstante para
+  // cuando SÍ hace falta que desaparezca al instante.
   async function cargarPendientesCodigo() {
     try {
       const db = await getDb();
-      const rows = await db.select<{ n: number }[]>(
+      const rows = await db.selectRapido<{ n: number }[]>(
         "SELECT COUNT(*) as n FROM productos WHERE codigo_barra LIKE 'SINCOD-%'"
       );
       setPendientesCodigo(rows[0]?.n ?? 0);
@@ -270,12 +273,23 @@ export default function App() {
     }
   }
 
-  useEffect(() => {
-    if (!configSyncLista) return;
-    cargarPendientesCodigo();
-    const id = setInterval(cargarPendientesCodigo, 20_000);
-    return () => clearInterval(id);
-  }, [configSyncLista]);
+  // Versión contra Turso en vivo — solo para el momento justo en que el
+  // admin le asigna un código a un producto desde PendientesCodigoBarras,
+  // así el contador le desaparece de encima al instante en vez de esperar
+  // al próximo refresco de caché.
+  async function cargarPendientesCodigoInstante() {
+    try {
+      const db = await getDb();
+      const rows = await db.select<{ n: number }[]>(
+        "SELECT COUNT(*) as n FROM productos WHERE codigo_barra LIKE 'SINCOD-%'"
+      );
+      setPendientesCodigo(rows[0]?.n ?? 0);
+    } catch {
+      // si falla, se reintenta solo en el próximo ciclo
+    }
+  }
+
+  useSondeoVisible(cargarPendientesCodigo, 20_000, configSyncLista);
 
   // Aviso de productos en 1 unidad o agotados — solo para admins (el
   // cajero no tiene acceso a Inventario para hacer algo con esto). A
@@ -300,10 +314,12 @@ export default function App() {
     }
   }
 
+  // De la caché local, no de Turso — mismo motivo que cargarPendientesCodigo
+  // más arriba: este aviso no necesita el dato al segundo.
   async function cargarProductosStockBajo() {
     try {
       const db = await getDb();
-      const rows = await db.select<{ n: number }[]>(
+      const rows = await db.selectRapido<{ n: number }[]>(
         "SELECT COUNT(*) as n FROM productos WHERE activo = 1 AND stock_actual <= 1"
       );
       setProductosStockBajo(rows[0]?.n ?? 0);
@@ -312,13 +328,7 @@ export default function App() {
     }
   }
 
-  useEffect(() => {
-    if (!configSyncLista || usuarioActual?.rol !== "ADMIN") return;
-    cargarProductosStockBajo();
-    const id = setInterval(cargarProductosStockBajo, 20_000);
-    return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [configSyncLista, usuarioActual]);
+  useSondeoVisible(cargarProductosStockBajo, 20_000, configSyncLista && usuarioActual?.rol === "ADMIN");
 
   // Ventas cobradas con más cantidad de un producto de la que había en
   // stock (ver comandos::listar_ventas_stock_pendiente) — a diferencia del
@@ -341,13 +351,7 @@ export default function App() {
     }
   }
 
-  useEffect(() => {
-    if (!configSyncLista || !usuarioActual) return;
-    cargarStockPendiente();
-    const id = setInterval(cargarStockPendiente, 20_000);
-    return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [configSyncLista, usuarioActual]);
+  useSondeoVisible(cargarStockPendiente, 20_000, configSyncLista && Boolean(usuarioActual));
 
   // Facturas que un cajero marcó para que un admin las revise (ej. "Esta
   // factura está duplicada por favor revisar") — solo avisa a los admins,
@@ -364,13 +368,7 @@ export default function App() {
     }
   }
 
-  useEffect(() => {
-    if (!configSyncLista || usuarioActual?.rol !== "ADMIN") return;
-    cargarRevisionesFactura();
-    const id = setInterval(cargarRevisionesFactura, 20_000);
-    return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [configSyncLista, usuarioActual]);
+  useSondeoVisible(cargarRevisionesFactura, 20_000, configSyncLista && usuarioActual?.rol === "ADMIN");
 
   // Pedidos de delivery recién llegados sin revisar (ver delivery.rs, tarea
   // de fondo cada ~30s) — visible para CUALQUIER rol logueado (admin y
@@ -856,7 +854,7 @@ export default function App() {
       {mostrarPendientesCodigo && (
         <PendientesCodigoBarras
           onCerrar={() => setMostrarPendientesCodigo(false)}
-          onCambio={cargarPendientesCodigo}
+          onCambio={cargarPendientesCodigoInstante}
         />
       )}
       {mostrarStockPendiente && (

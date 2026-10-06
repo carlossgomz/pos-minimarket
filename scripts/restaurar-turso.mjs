@@ -46,14 +46,26 @@ async function main() {
     if (sql_creacion) await db.execute(sql_creacion);
   }
 
+  // Las tablas van en orden alfabético, no en el orden de sus llaves
+  // foráneas (ej. "detalle_venta" antes que "ventas"), así que insertar con
+  // las llaves foráneas activas falla a mitad de camino. migrate() corre
+  // cada lote con las llaves foráneas desactivadas — al terminar, todas las
+  // filas de las que dependen ya están cargadas, igual que en el original.
+  // Por lotes en vez de fila por fila: contra Turso cada execute() es un
+  // viaje por internet, y miles de filas una por una tardan muchísimo.
+  const TAMANO_LOTE = 500;
   for (const nombre of nombresTablas) {
     const { filas } = respaldo.tablas[nombre];
+    const sentencias = [];
     for (const fila of filas) {
       const columnas = Object.keys(fila);
       if (columnas.length === 0) continue;
       const marcadores = columnas.map((_, i) => `$${i + 1}`).join(", ");
       const sql = `INSERT INTO "${nombre}" (${columnas.map((c) => `"${c}"`).join(", ")}) VALUES (${marcadores})`;
-      await db.execute({ sql, args: columnas.map((c) => fila[c]) });
+      sentencias.push({ sql, args: columnas.map((c) => fila[c]) });
+    }
+    for (let i = 0; i < sentencias.length; i += TAMANO_LOTE) {
+      await db.migrate(sentencias.slice(i, i + TAMANO_LOTE));
     }
     console.log(`  ${nombre}: ${filas.length} filas restauradas`);
   }

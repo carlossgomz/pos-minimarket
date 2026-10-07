@@ -30,6 +30,7 @@ fn main() {
                 "editar_factura_compra",
                 "eliminar_factura_compra",
                 "desglosar_producto",
+                "importar_productos",
                 "enviar_factura_a_revision",
                 "listar_facturas_en_revision",
                 "resolver_revision_factura",

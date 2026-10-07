@@ -7,6 +7,7 @@ import { estadoStock, formatearStock, gananciaUnitariaUsd, precioVentaBsHoy, pre
 import { fechaHoraVenezuela } from "../fecha";
 import { normalizarTexto, sqlSinAcentos } from "../busqueda";
 import { exportarExcel } from "../exportarExcel";
+import ImportarProductosExcel from "./ImportarProductosExcel";
 
 // Menú "⋮" para las acciones menos usadas de cada producto — antes eran 4
 // botones de texto apilados en la celda (uno por línea, ver "no rastrear
@@ -167,13 +168,16 @@ const SIN_CATEGORIA = "__SIN_CATEGORIA__";
 
 export default function Inventario({
   config,
+  esAdmin,
   soloProblemasInicial,
   visible,
 }: {
   config: ConfigRow;
+  esAdmin: boolean;
   soloProblemasInicial?: boolean;
   visible: boolean;
 }) {
+  const [mostrarImportarExcel, setMostrarImportarExcel] = useState(false);
   const [productos, setProductos] = useState<ProductoConMovimientos[]>([]);
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -796,6 +800,14 @@ export default function Inventario({
           >
             Exportar a Excel
           </button>
+          {esAdmin && (
+            <>
+              {" "}
+              <button type="button" className="link-btn" style={{ marginBottom: 8 }} onClick={() => setMostrarImportarExcel(true)}>
+                Importar desde Excel
+              </button>
+            </>
+          )}
           <div style={{ overflowX: "auto" }}>
             <table className="tabla-compacta">
               <thead>
@@ -1138,6 +1150,17 @@ export default function Inventario({
             </div>
           </div>
         </div>
+      )}
+      {mostrarImportarExcel && (
+        <ImportarProductosExcel
+          config={config}
+          avisoCache="Los productos van a aparecer en Venta en menos de 1 minuto (la caché local se refresca sola)."
+          onCerrar={() => setMostrarImportarExcel(false)}
+          onImportado={async () => {
+            await cargarCategorias();
+            await cargar();
+          }}
+        />
       )}
     </div>
   );

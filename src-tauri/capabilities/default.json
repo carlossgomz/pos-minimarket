@@ -33,6 +33,7 @@
     "allow-editar-factura-compra",
     "allow-eliminar-factura-compra",
     "allow-desglosar-producto",
+    "allow-importar-productos",
     "allow-sincronizar-catalogo-delivery",
     "allow-obtener-pedidos-delivery-pendientes",
     "allow-guardar-archivo",

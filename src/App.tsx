@@ -811,6 +811,7 @@ export default function App() {
       <div style={{ display: tabEfectivo === "inventario" ? "block" : "none" }}>
         <Inventario
           config={config}
+          esAdmin={esAdmin}
           soloProblemasInicial={abrirInventarioFiltrado}
           visible={tabEfectivo === "inventario"}
         />

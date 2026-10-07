@@ -115,6 +115,7 @@ pub fn run() {
             comandos::editar_factura_compra,
             comandos::eliminar_factura_compra,
             comandos::desglosar_producto,
+            comandos::importar_productos,
             delivery::sincronizar_catalogo_delivery,
             delivery::obtener_pedidos_delivery_pendientes
         ])

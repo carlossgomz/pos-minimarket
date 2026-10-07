@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-importar-productos"
+description = "Enables the importar_productos command without any pre-configured scope."
+commands.allow = ["importar_productos"]
+
+[[permission]]
+identifier = "deny-importar-productos"
+description = "Denies the importar_productos command without any pre-configured scope."
+commands.deny = ["importar_productos"]

@@ -2397,3 +2397,122 @@ pub async fn editar_factura_compra(
 
     Ok(FacturaCompraOutput { monto_total_usd })
 }
+
+// Importación masiva desde Excel (ver ImportarProductosExcel.tsx). El
+// parseo del archivo, el reconocimiento de encabezados y la resolución de
+// precio/margen pasan por el frontend (ahí vive también la vista previa,
+// que tiene que mostrar EXACTAMENTE lo que se va a guardar) — este comando
+// solo recibe filas ya resueltas y hace el trabajo mecánico de guardarlas,
+// igual que agregarProducto() hace a mano por cada producto en
+// Inventario.tsx, pero las miles de filas en UNA sola transacción en vez
+// de un viaje a Turso por fila. Todo o nada: si algo falla a mitad (ej. un
+// código repetido que se coló), no queda ningún producto a medias. Sin
+// conexión, conexion() falla con un error claro — no se encola en el
+// outbox de offline.rs, a propósito (importar miles de productos desde
+// una cola local sería arriesgarse a perderlos si la cola se corrompe).
+#[derive(Debug, Deserialize)]
+pub struct ItemImportarProductoInput {
+    pub codigo_barra: String,
+    pub nombre: String,
+    #[serde(default)]
+    pub categoria_nombre: Option<String>,
+    pub costo_actual_usd: f64,
+    pub margen_porcentaje: f64,
+    pub precio_venta_bs: f64,
+    pub stock_actual: f64,
+    #[serde(default)]
+    pub stock_minimo: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ImportarProductosInput {
+    pub items: Vec<ItemImportarProductoInput>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ImportarProductosOutput {
+    pub creados: i64,
+}
+
+#[tauri::command]
+pub async fn importar_productos(app: tauri::AppHandle, input: ImportarProductosInput) -> Result<ImportarProductosOutput, String> {
+    if input.items.is_empty() {
+        return Err("No hay productos para importar.".to_string());
+    }
+
+    let conn = conexion(&app).await?;
+    let tx = conn.transaction().await.map_err(|e| e.to_string())?;
+
+    // Categorías existentes, por nombre en minúsculas — para no crear una
+    // categoría duplicada ni consultar la base una vez por fila. Si el
+    // Excel trae una categoría nueva, se crea la PRIMERA vez que aparece y
+    // las demás filas con el mismo nombre reutilizan ese id desde el mapa.
+    let mut categorias: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    {
+        let mut filas_cat = tx.query("SELECT id, nombre FROM categorias", ()).await.map_err(|e| e.to_string())?;
+        while let Some(fila) = filas_cat.next().await.map_err(|e| e.to_string())? {
+            let id: String = fila.get(0).map_err(|e| e.to_string())?;
+            let nombre: String = fila.get(1).map_err(|e| e.to_string())?;
+            categorias.insert(nombre.to_lowercase(), id);
+        }
+    }
+
+    let fecha_hora = ahora_venezuela();
+    let mut creados = 0_i64;
+
+    for item in &input.items {
+        let categoria_id: Option<String> = match &item.categoria_nombre {
+            Some(nombre) if !nombre.trim().is_empty() => {
+                let clave = nombre.trim().to_lowercase();
+                if let Some(id) = categorias.get(&clave) {
+                    Some(id.clone())
+                } else {
+                    let nuevo_id = Uuid::new_v4().to_string();
+                    tx.execute(
+                        "INSERT INTO categorias (id, nombre) VALUES (?1, ?2)",
+                        libsql::params![nuevo_id.clone(), nombre.trim().to_string()],
+                    )
+                    .await
+                    .map_err(|e| e.to_string())?;
+                    categorias.insert(clave, nuevo_id.clone());
+                    Some(nuevo_id)
+                }
+            }
+            _ => None,
+        };
+
+        let producto_id = Uuid::new_v4().to_string();
+        tx.execute(
+            "INSERT INTO productos (id, codigo_barra, nombre, categoria_id, costo_actual_usd, margen_porcentaje, precio_venta_bs, stock_actual, stock_minimo)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8, COALESCE(?9, 5))",
+            libsql::params![
+                producto_id.clone(),
+                item.codigo_barra.clone(),
+                item.nombre.clone(),
+                categoria_id,
+                item.costo_actual_usd,
+                item.margen_porcentaje,
+                item.precio_venta_bs,
+                item.stock_actual,
+                item.stock_minimo,
+            ],
+        )
+        .await
+        .map_err(|e| format!("No se pudo crear \"{}\" (código \"{}\" repetido): {e}", item.nombre, item.codigo_barra))?;
+
+        if item.stock_actual > 0.0 {
+            tx.execute(
+                "INSERT INTO movimientos_inventario (id, producto_id, tipo, cantidad, motivo, created_at)
+                 VALUES (?1,?2,'ENTRADA',?3,'Inventario inicial (importado)',?4)",
+                libsql::params![Uuid::new_v4().to_string(), producto_id, item.stock_actual, fecha_hora.clone()],
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        }
+
+        creados += 1;
+    }
+
+    tx.commit().await.map_err(|e| e.to_string())?;
+    Ok(ImportarProductosOutput { creados })
+}

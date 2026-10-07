@@ -3,10 +3,16 @@ import KaxMascota, { PoseKax } from "./KaxMascota";
 import { Consejo, DestinoConsejo, obtenerConsejosGenerales } from "./asistente";
 import { useSondeoVisible } from "./useSondeoVisible";
 
-// Cada 5 minutos alcanza de sobra — son consejos, no algo que necesite
+// Una vez por hora alcanza de sobra — son consejos, no algo que necesite
 // sentirse en tiempo real, y así se evita sumarle presión al límite de
-// consultas de Turso (ver memoria del proyecto sobre eso).
-const REFRESCO_MS = 5 * 60 * 1000;
+// consultas de Turso (ver memoria del proyecto sobre eso). El caché en
+// localStorage (ver CACHE_KEY) es la protección de fondo: useSondeoVisible
+// también vuelve a llamar a cargar() cada vez que la ventana vuelve a
+// estar visible (alt-tab, desminimizar), y sin el caché eso dispararía
+// una consulta a Turso cada vez, sin importar qué tan seguido pase.
+const REFRESCO_MS = 60 * 60 * 1000;
+const CACHE_KEY = "kax-consejos-cache";
+const CACHE_MAX_EDAD_MS = 60 * 60 * 1000;
 const MINIMIZADO_KEY = "kax-asistente-minimizado";
 // Por PC (localStorage, no por usuario) — la mascota es nueva para
 // cualquiera que abra Kaxa después de esta actualización, sea cajero o
@@ -79,9 +85,24 @@ export default function AsistenteLateral({
 
   async function cargar() {
     try {
+      const guardado = localStorage.getItem(CACHE_KEY);
+      if (guardado) {
+        const cache: { consejos: Consejo[]; ts: number } = JSON.parse(guardado);
+        if (Date.now() - cache.ts < CACHE_MAX_EDAD_MS) {
+          setConsejos(cache.consejos);
+          setIndice(0);
+          return;
+        }
+      }
+    } catch {
+      // caché corrupto/no parseable — se ignora y se sigue a pedir los
+      // consejos de nuevo, igual que si no hubiera caché
+    }
+    try {
       const lista = await obtenerConsejosGenerales(esAdmin, tasa);
       setConsejos(lista);
       setIndice(0);
+      localStorage.setItem(CACHE_KEY, JSON.stringify({ consejos: lista, ts: Date.now() }));
     } catch {
       // si falla (ej. sin conexión), Kax simplemente no tiene nada nuevo
       // que decir por ahora — no vale la pena interrumpir con un error acá

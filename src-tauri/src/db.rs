@@ -150,6 +150,8 @@ const MIGRACIONES: &[(i64, &str, &str)] = &[
     (35, "notas de credito de compra", include_str!("../migrations/0035_notas_credito_compra.sql")),
     (36, "revisiones de factura", include_str!("../migrations/0036_revisiones_factura.sql")),
     (37, "indice stock pendiente", include_str!("../migrations/0037_indice_stock_pendiente.sql")),
+    (38, "indice venta_items por producto", include_str!("../migrations/0038_indice_venta_items_producto.sql")),
+    (39, "cambios_cache (version para saltar refrescos de cache innecesarios)", include_str!("../migrations/0039_cambios_cache.sql")),
 ];
 
 pub async fn ejecutar_migraciones(conn: &libsql::Connection) -> anyhow::Result<()> {

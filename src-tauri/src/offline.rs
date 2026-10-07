@@ -144,14 +144,31 @@ pub async fn estado_conexion(
 pub fn arrancar_tarea_sincronizacion(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut intervalo = tokio::time::interval(std::time::Duration::from_secs(60));
+        // None = todavía no se refrescó ni una vez en esta corrida — fuerza
+        // el primer refresco siempre, sin importar qué versión tenga
+        // cambios_cache en Turso.
+        let mut ultima_version_vista: Option<i64> = None;
         loop {
             intervalo.tick().await;
-            sincronizar_una_vez(&app).await;
+            sincronizar_una_vez(&app, &mut ultima_version_vista).await;
         }
     });
 }
 
-async fn sincronizar_una_vez(app: &tauri::AppHandle) {
+/// Lee la versión de cambios_cache (ver migración 0039) — 1 sola fila, muy
+/// barato comparado con releer las 7 tablas completas.
+async fn version_cambios_cache(conn_remota: &libsql::Connection) -> Result<i64, String> {
+    let mut filas = conn_remota
+        .query("SELECT version FROM cambios_cache WHERE id = 1", ())
+        .await
+        .map_err(|e| e.to_string())?;
+    match filas.next().await.map_err(|e| e.to_string())? {
+        Some(fila) => fila.get(0).map_err(|e| e.to_string()),
+        None => Err("la fila de cambios_cache no existe".to_string()),
+    }
+}
+
+async fn sincronizar_una_vez(app: &tauri::AppHandle, ultima_version_vista: &mut Option<i64>) {
     let estado = app.state::<EstadoBaseDatos>();
     let cache = app.state::<EstadoCache>();
 
@@ -165,8 +182,27 @@ async fn sincronizar_una_vez(app: &tauri::AppHandle) {
     if let Err(e) = reproducir_outbox(&conn_remota, &cache).await {
         eprintln!("Sincronización: error reproduciendo la cola pendiente: {e}");
     }
-    if let Err(e) = refrescar_cache(&conn_remota, &cache).await {
-        eprintln!("Sincronización: error refrescando la caché local: {e}");
+
+    // Solo se relee la caché completa si de verdad cambió algo desde el
+    // último refresco (o si todavía no se refrescó ninguna vez). Si por
+    // lo que sea no se puede leer la versión, se refresca igual — más
+    // caro, pero nunca deja la caché desactualizada para siempre por un
+    // error pasajero.
+    match version_cambios_cache(&conn_remota).await {
+        Ok(version_actual) if *ultima_version_vista == Some(version_actual) => return,
+        Ok(version_actual) => {
+            if let Err(e) = refrescar_cache(&conn_remota, &cache).await {
+                eprintln!("Sincronización: error refrescando la caché local: {e}");
+            } else {
+                *ultima_version_vista = Some(version_actual);
+            }
+        }
+        Err(e) => {
+            eprintln!("Sincronización: no se pudo leer cambios_cache, se refresca igual: {e}");
+            if let Err(e) = refrescar_cache(&conn_remota, &cache).await {
+                eprintln!("Sincronización: error refrescando la caché local: {e}");
+            }
+        }
     }
 }
 

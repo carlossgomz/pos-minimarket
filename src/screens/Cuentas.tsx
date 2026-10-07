@@ -42,6 +42,36 @@ function colorVencimiento(dias: number): string {
   return "var(--text-secondary)";
 }
 
+// Reemplaza a window.confirm(), que en algunos equipos no se llega a
+// mostrar dentro del WebView de Tauri (el usuario reportó que la
+// "ventana emergente" del abono no aparecía) — esta sí vive en el DOM
+// de la app, así que siempre se ve.
+function ConfirmacionModal({
+  mensaje,
+  onConfirmar,
+  onCancelar,
+  textoConfirmar = "Sí, confirmar",
+}: {
+  mensaje: string;
+  onConfirmar: () => void;
+  onCancelar: () => void;
+  textoConfirmar?: string;
+}) {
+  return (
+    <div className="modal-fondo" onMouseDown={onCancelar}>
+      <div className="modal-caja" onMouseDown={(e) => e.stopPropagation()} style={{ maxWidth: 420 }}>
+        <p style={{ marginTop: 0 }}>{mensaje}</p>
+        <div className="form-row" style={{ justifyContent: "flex-end" }}>
+          <button className="link-btn" onClick={onCancelar}>
+            cancelar
+          </button>
+          <button onClick={onConfirmar}>{textoConfirmar}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CuentasPorCobrar({ config, esAdmin }: { config: ConfigRow; esAdmin: boolean }) {
   const [clientes, setClientes] = useState<ClienteDeudor[]>([]);
   const [cedulaAbierta, setCedulaAbierta] = useState<string | null>(null);
@@ -173,7 +203,11 @@ function CuentasPorCobrar({ config, esAdmin }: { config: ConfigRow; esAdmin: boo
     if (clienteAbono) abonoRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [clienteAbono]);
 
-  async function confirmarAbono() {
+  const [confirmacionAbono, setConfirmacionAbono] = useState<{ usd: number; tasa: number; mensaje: string } | null>(
+    null
+  );
+
+  function confirmarAbono() {
     if (!clienteAbono) return;
     const montoEscrito = Number(montoBs);
     const tasa = Number(tasaPago);
@@ -195,10 +229,17 @@ function CuentasPorCobrar({ config, esAdmin }: { config: ConfigRow; esAdmin: boo
     }
 
     const montoTexto = monedaMetodo === "USD" ? `$${montoEscrito.toFixed(2)}` : `Bs ${montoEscrito.toFixed(2)}`;
-    if (!window.confirm(`¿Registrar el abono de ${montoTexto} a ${clienteAbono.cliente_nombre}?`)) {
-      return;
-    }
+    setConfirmacionAbono({
+      usd,
+      tasa,
+      mensaje: `¿Registrar el abono de ${montoTexto} a ${clienteAbono.cliente_nombre}?`,
+    });
+  }
 
+  async function ejecutarAbono() {
+    if (!clienteAbono || !confirmacionAbono) return;
+    const { usd, tasa } = confirmacionAbono;
+    setConfirmacionAbono(null);
     try {
       // Se guarda en una sola transacción real en Rust (ver
       // src-tauri/src/comandos.rs) — el mismo problema que tenían las
@@ -435,6 +476,14 @@ function CuentasPorCobrar({ config, esAdmin }: { config: ConfigRow; esAdmin: boo
           {mensaje && <p className="error">{mensaje}</p>}
         </div>
       )}
+      {confirmacionAbono && (
+        <ConfirmacionModal
+          mensaje={confirmacionAbono.mensaje}
+          onConfirmar={ejecutarAbono}
+          onCancelar={() => setConfirmacionAbono(null)}
+          textoConfirmar="Sí, registrar"
+        />
+      )}
     </div>
   );
 }
@@ -520,7 +569,11 @@ function CuentasPorPagar({ config }: { config: ConfigRow }) {
     setMensaje(null);
   }
 
-  async function confirmarAbono() {
+  const [confirmacionAbono, setConfirmacionAbono] = useState<{ usd: number; tasa: number; mensaje: string } | null>(
+    null
+  );
+
+  function confirmarAbono() {
     if (!facturaAbono) return;
     const montoEscrito = Number(montoBs);
     const tasa = Number(tasaPago);
@@ -542,10 +595,17 @@ function CuentasPorPagar({ config }: { config: ConfigRow }) {
 
     const nombreProveedor = proveedores.find((p) => p.proveedor_id === proveedorAbierto)?.proveedor_nombre ?? "este proveedor";
     const montoTexto = monedaMetodo === "USD" ? `$${montoEscrito.toFixed(2)}` : `Bs ${montoEscrito.toFixed(2)}`;
-    if (!window.confirm(`¿Registrar el abono de ${montoTexto} a ${nombreProveedor} (factura ${facturaAbono.numero_factura})?`)) {
-      return;
-    }
+    setConfirmacionAbono({
+      usd,
+      tasa,
+      mensaje: `¿Registrar el abono de ${montoTexto} a ${nombreProveedor} (factura ${facturaAbono.numero_factura})?`,
+    });
+  }
 
+  async function ejecutarAbono() {
+    if (!facturaAbono || !confirmacionAbono) return;
+    const { usd, tasa } = confirmacionAbono;
+    setConfirmacionAbono(null);
     try {
       // Misma corrección que en el abono de clientes: transacción real
       // en Rust en vez de BEGIN/COMMIT sueltos desde el frontend.
@@ -643,7 +703,12 @@ function CuentasPorPagar({ config }: { config: ConfigRow }) {
     return acc + (cant > 0 ? cant * it.costo_unitario_usd : 0);
   }, 0);
 
-  async function confirmarNotaCredito() {
+  const [confirmacionNotaCredito, setConfirmacionNotaCredito] = useState<{
+    items: { producto_id: string; cantidad: number }[];
+    mensaje: string;
+  } | null>(null);
+
+  function confirmarNotaCredito() {
     if (!facturaNotaCredito) return;
     const items = itemsFacturaCredito
       .map((it) => ({ producto_id: it.producto_id, cantidad: Number(cantidadesCredito[it.producto_id] || "0") }))
@@ -656,13 +721,16 @@ function CuentasPorPagar({ config }: { config: ConfigRow }) {
       setMensajeNotaCredito("Indica el motivo de la nota de crédito.");
       return;
     }
-    if (
-      !window.confirm(
-        `¿Registrar esta nota de crédito por USD ${montoNotaCreditoUsd.toFixed(2)}? Esto rebaja el stock de los productos elegidos y el monto de la factura ${facturaNotaCredito.numero_factura}.`
-      )
-    ) {
-      return;
-    }
+    setConfirmacionNotaCredito({
+      items,
+      mensaje: `¿Registrar esta nota de crédito por USD ${montoNotaCreditoUsd.toFixed(2)}? Esto rebaja el stock de los productos elegidos y el monto de la factura ${facturaNotaCredito.numero_factura}.`,
+    });
+  }
+
+  async function ejecutarNotaCredito() {
+    if (!facturaNotaCredito || !confirmacionNotaCredito) return;
+    const { items } = confirmacionNotaCredito;
+    setConfirmacionNotaCredito(null);
     setGuardandoNotaCredito(true);
     try {
       await invoke("registrar_nota_credito_compra", {
@@ -952,6 +1020,22 @@ function CuentasPorPagar({ config }: { config: ConfigRow }) {
           </div>
           {mensajeNotaCredito && <p className="error">{mensajeNotaCredito}</p>}
         </div>
+      )}
+      {confirmacionAbono && (
+        <ConfirmacionModal
+          mensaje={confirmacionAbono.mensaje}
+          onConfirmar={ejecutarAbono}
+          onCancelar={() => setConfirmacionAbono(null)}
+          textoConfirmar="Sí, registrar"
+        />
+      )}
+      {confirmacionNotaCredito && (
+        <ConfirmacionModal
+          mensaje={confirmacionNotaCredito.mensaje}
+          onConfirmar={ejecutarNotaCredito}
+          onCancelar={() => setConfirmacionNotaCredito(null)}
+          textoConfirmar="Sí, registrar"
+        />
       )}
     </div>
   );

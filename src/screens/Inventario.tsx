@@ -191,6 +191,10 @@ export default function Inventario({
   const [busqueda, setBusqueda] = useState("");
   const [categoriaFiltro, setCategoriaFiltro] = useState("");
   const [soloProblemas, setSoloProblemas] = useState(soloProblemasInicial ?? false);
+  // Los inactivos (eliminados con historial — ver eliminarProducto) quedan
+  // afuera por defecto para no ocupar espacio en la lista; esta casilla los
+  // vuelve a mostrar por si hace falta reactivar uno.
+  const [mostrarInactivos, setMostrarInactivos] = useState(false);
   // Qué columnas extra llevar a la hoja de "Imprimir lista para conteo" —
   // Código/Nombre/Stock del sistema/columna en blanco para contar siempre
   // van (es la razón de ser de la hoja); el resto es opcional porque a
@@ -326,6 +330,9 @@ export default function Inventario({
   // a pedido explícito (generaba demasiado ruido con cientos de productos).
   const productosFiltrados = useMemo(() => {
     let base = productos;
+    if (!mostrarInactivos) {
+      base = base.filter((p) => p.activo);
+    }
     if (soloProblemas) {
       base = base.filter((p) => estadoStock(p) === "agotado" || estadoStock(p) === "critico");
     }
@@ -335,13 +342,13 @@ export default function Inventario({
       base = base.filter((p) => p.categoria_id === categoriaFiltro);
     }
     return base;
-  }, [productos, soloProblemas, categoriaFiltro]);
+  }, [productos, mostrarInactivos, soloProblemas, categoriaFiltro]);
 
   const totalPaginas = Math.max(1, Math.ceil(productosFiltrados.length / TAMANO_PAGINA));
 
   useEffect(() => {
     setPagina(0);
-  }, [busqueda, soloProblemas, categoriaFiltro]);
+  }, [busqueda, mostrarInactivos, soloProblemas, categoriaFiltro]);
 
   useEffect(() => {
     if (pagina > totalPaginas - 1) setPagina(totalPaginas - 1);
@@ -766,12 +773,20 @@ export default function Inventario({
               />
               Solo crítico (1 unidad) o agotado
             </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+              <input
+                type="checkbox"
+                checked={mostrarInactivos}
+                onChange={(e) => setMostrarInactivos(e.target.checked)}
+              />
+              Mostrar inactivos
+            </label>
           </div>
 
           <div className="form-row" style={{ alignItems: "center", justifyContent: "space-between" }}>
             <h2 style={{ marginTop: 16 }}>
               Catálogo ({productosFiltrados.length}
-              {soloProblemas || categoriaFiltro ? ` de ${productos.length}` : ""})
+              {mostrarInactivos || soloProblemas || categoriaFiltro ? ` de ${productos.length}` : ""})
             </h2>
             <button
               type="button"

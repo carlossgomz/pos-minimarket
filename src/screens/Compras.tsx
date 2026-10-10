@@ -100,6 +100,11 @@ export default function Compras({
 
   const [lineas, setLineas] = useState<LineaFacturaBorrador[]>([]);
   const [mensaje, setMensaje] = useState<string | null>(null);
+  // Separado de "mensaje" (que es solo texto chico arriba del formulario,
+  // fácil de perderse con la factura llena de líneas) — un error al
+  // guardar es grave (se pierde el trabajo si no se corrige), así que va
+  // en una ventana propia que hay que cerrar a propósito.
+  const [errorGuardado, setErrorGuardado] = useState<string | null>(null);
   const [guardando, setGuardando] = useState(false);
   const [ultimaFactura, setUltimaFactura] = useState<string | null>(null);
 
@@ -804,7 +809,7 @@ export default function Compras({
         await invoke("guardar_factura_compra", { input });
       }
     } catch (e) {
-      setMensaje(`No se pudo guardar la factura: ${String(e)}`);
+      setErrorGuardado(String(e));
       setGuardando(false);
       return;
     }
@@ -1571,6 +1576,18 @@ export default function Compras({
             </button>
           </div>
           {mensajeCambioProveedor && <p className="error">{mensajeCambioProveedor}</p>}
+        </div>
+      )}
+
+      {errorGuardado && (
+        <div className="modal-fondo" onMouseDown={() => setErrorGuardado(null)}>
+          <div className="modal-caja" onMouseDown={(e) => e.stopPropagation()} style={{ maxWidth: 480 }}>
+            <h2 style={{ marginTop: 0 }}>No se pudo guardar la factura</h2>
+            <p>{errorGuardado}</p>
+            <button type="button" onClick={() => setErrorGuardado(null)}>
+              Entendido
+            </button>
+          </div>
         </div>
       )}
     </div>

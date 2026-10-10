@@ -2012,6 +2012,46 @@ pub struct FacturaCompraOutput {
     monto_total_usd: f64,
 }
 
+/// Antes de insertar nada, revisa que ningún producto "nuevo" de la
+/// factura tenga un código de barras repetido — ni contra otra línea de
+/// esta misma factura, ni contra uno que ya exista en el catálogo. Sin
+/// esto, el primer aviso del problema era el error crudo de SQLite al
+/// intentar el INSERT ("UNIQUE constraint failed: productos.codigo_barra"),
+/// que no dice ni el producto ni el código — acá se detecta antes y se
+/// arma un mensaje que señala exactamente cuál línea es.
+async fn validar_codigos_barra_nuevos(tx: &libsql::Transaction, items: &[ItemFacturaCompraInput]) -> Result<(), String> {
+    let mut vistos: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+    for item in items {
+        if !item.es_nuevo {
+            continue;
+        }
+        let codigo = item.codigo_barra.as_str();
+        if let Some(otro_nombre) = vistos.get(codigo) {
+            return Err(format!(
+                "\"{}\" y \"{}\" tienen el mismo código de barras (\"{codigo}\") en esta factura — corrige uno de los dos.",
+                otro_nombre, item.nombre
+            ));
+        }
+        vistos.insert(codigo, item.nombre.as_str());
+
+        let existente = tx
+            .query("SELECT nombre FROM productos WHERE codigo_barra = ?1", libsql::params![codigo.to_string()])
+            .await
+            .map_err(|e| e.to_string())?
+            .next()
+            .await
+            .map_err(|e| e.to_string())?;
+        if let Some(fila) = existente {
+            let nombre_existente: String = fila.get(0).map_err(|e| e.to_string())?;
+            return Err(format!(
+                "El código de barras \"{codigo}\" de \"{}\" ya pertenece a \"{nombre_existente}\" en tu catálogo — búscalo en vez de crearlo de nuevo.",
+                item.nombre
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Inserta las líneas de una factura de compra (productos nuevos si hace
 /// falta, la línea en `items_factura_compra`, el lote FIFO y el
 /// movimiento de inventario de cada una) contra una factura ya existente
@@ -2072,7 +2112,20 @@ async fn insertar_items_factura_interna(
                 ],
             )
             .await
-            .map_err(|e| e.to_string())?;
+            // Red de seguridad por si dos PCs guardan casi al mismo tiempo
+            // y el mismo código de barras pasa la validación de
+            // validar_codigos_barra_nuevos en ambas antes de que cualquiera
+            // termine de insertar — normalmente ya no debería llegar acá
+            // con un error de código repetido, pero si pasa, que diga el
+            // producto en vez del error crudo de SQLite.
+            .map_err(|e| {
+                let cruda = e.to_string();
+                if cruda.contains("UNIQUE constraint failed: productos.codigo_barra") {
+                    format!("\"{}\" tiene un código de barras que ya existe en el catálogo (lo guardó otra PC justo ahora) — vuelve a intentar.", item.nombre)
+                } else {
+                    cruda
+                }
+            })?;
         }
 
         tx.execute(
@@ -2191,6 +2244,25 @@ pub async fn guardar_factura_compra(
 
     let conn = conexion(&app).await?;
     let tx = conn.transaction().await.map_err(|e| e.to_string())?;
+
+    let ya_existe_numero = tx
+        .query(
+            "SELECT 1 FROM facturas_compra WHERE proveedor_id = ?1 AND numero_factura = ?2",
+            libsql::params![input.proveedor_id.clone(), input.numero_factura.clone()],
+        )
+        .await
+        .map_err(|e| e.to_string())?
+        .next()
+        .await
+        .map_err(|e| e.to_string())?;
+    if ya_existe_numero.is_some() {
+        return Err(format!(
+            "Ya existe una factura con el número \"{}\" para este proveedor.",
+            input.numero_factura
+        ));
+    }
+
+    validar_codigos_barra_nuevos(&tx, &input.items).await?;
 
     tx.execute(
         "INSERT INTO facturas_compra (id, proveedor_id, numero_factura, fecha, moneda, tasa_cambio_dia, monto_total_usd)
@@ -2371,6 +2443,25 @@ pub async fn editar_factura_compra(
     if let Some(motivo) = factura_compra_bloqueo(&tx, &factura_id).await? {
         return Err(motivo);
     }
+
+    let ya_existe_numero = tx
+        .query(
+            "SELECT 1 FROM facturas_compra WHERE proveedor_id = ?1 AND numero_factura = ?2 AND id != ?3",
+            libsql::params![input.proveedor_id.clone(), input.numero_factura.clone(), factura_id.clone()],
+        )
+        .await
+        .map_err(|e| e.to_string())?
+        .next()
+        .await
+        .map_err(|e| e.to_string())?;
+    if ya_existe_numero.is_some() {
+        return Err(format!(
+            "Ya existe otra factura con el número \"{}\" para este proveedor.",
+            input.numero_factura
+        ));
+    }
+
+    validar_codigos_barra_nuevos(&tx, &input.items).await?;
 
     revertir_factura_compra_interna(&tx, &factura_id).await?;
 

@@ -312,7 +312,7 @@ async fn sugerir_reposicion_interna(app: tauri::AppHandle) -> Result<SugerenciaR
                         AND date(v.fecha_hora) >= ?1
                     ), 0.0) as vendido_periodo
              FROM productos p
-             WHERE p.activo = 1 AND p.id != 'f195fbac-103d-48fa-a27a-28371fba7745'",
+             WHERE p.activo = 1 AND p.ignora_alerta_stock = 0 AND p.id != 'f195fbac-103d-48fa-a27a-28371fba7745'",
             libsql::params![desde],
         )
         .await

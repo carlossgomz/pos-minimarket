@@ -69,7 +69,8 @@ export type EstadoStock = "agotado" | "critico" | "bajo" | "ok";
 // "critico" es una advertencia dura, fija en 1 unidad, independiente del
 // stock mínimo configurable de cada producto — para que salte a la vista
 // aunque el mínimo esté mal puesto o ni se haya revisado.
-export function estadoStock(p: Pick<Producto, "stock_actual" | "stock_minimo">): EstadoStock {
+export function estadoStock(p: Pick<Producto, "stock_actual" | "stock_minimo" | "ignora_alerta_stock">): EstadoStock {
+  if (p.ignora_alerta_stock) return "ok";
   if (p.stock_actual <= 0) return "agotado";
   if (p.stock_actual === 1) return "critico";
   if (p.stock_actual <= p.stock_minimo) return "bajo";

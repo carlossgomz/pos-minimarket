@@ -261,7 +261,7 @@ export async function obtenerConsejosGenerales(esAdmin: boolean, tasa: number): 
        FROM productos p
        JOIN venta_items vi ON vi.producto_id = p.id
        JOIN ventas v ON v.id = vi.venta_id
-       WHERE p.activo = 1 AND p.uso_interno = 0 AND p.stock_minimo > 0 AND p.stock_actual <= p.stock_minimo
+       WHERE p.activo = 1 AND p.uso_interno = 0 AND p.ignora_alerta_stock = 0 AND p.stock_minimo > 0 AND p.stock_actual <= p.stock_minimo
          AND v.fecha_hora >= $1
        GROUP BY p.id ORDER BY ganancia_30d_bs DESC LIMIT 1`,
       [hace30dias]
@@ -281,7 +281,7 @@ export async function obtenerConsejosGenerales(esAdmin: boolean, tasa: number): 
     const stockMuerto = await db.select<{ nombre: string; stock_actual: number; capital_usd: number }[]>(
       `SELECT p.nombre, p.stock_actual, p.stock_actual * p.costo_actual_usd as capital_usd
        FROM productos p
-       WHERE p.activo = 1 AND p.uso_interno = 0 AND p.stock_actual > 0
+       WHERE p.activo = 1 AND p.uso_interno = 0 AND p.ignora_alerta_stock = 0 AND p.stock_actual > 0
          AND p.created_at <= $1
          AND NOT EXISTS (
            SELECT 1 FROM venta_items vi JOIN ventas v ON v.id = vi.venta_id

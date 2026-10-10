@@ -19,6 +19,7 @@ export type Producto = {
   disponible_delivery: number; // 0/1 — si se ofrece o no en la app de delivery
   por_peso: number; // 0/1 — se vende por peso (kg), no por unidad
   ignora_stock: number; // 0/1 — producto de servicio (ej. delivery), nunca marca "stock por revisar"
+  ignora_alerta_stock: number; // 0/1 — no avisar "agotado"/"stock bajo" de este producto (sigue llevando stock real)
   uso_interno: number; // 0/1 - solo para registrar compra (ej. materia prima que se desglosa), nunca se vende directo ni cuenta en estadisticas
   producto_padre_id: string | null; // producto "paquete" del que sale este (ej. CIGARRO DETALLADO -> CIGARRO CAJA), para el atajo de abrir paquete en Venta
   // Cuántas unidades de ESTE producto genera 1 unidad del padre (ej. 1 caja

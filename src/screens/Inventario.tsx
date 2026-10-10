@@ -18,6 +18,7 @@ function MenuAcciones({
   producto,
   nombrePadre,
   onNoRastrearStock,
+  onIgnorarAlertaStock,
   onUsoInterno,
   onVincularPaquete,
   onQuitarPadre,
@@ -26,6 +27,7 @@ function MenuAcciones({
   producto: ProductoInventario;
   nombrePadre: string | undefined;
   onNoRastrearStock: () => void;
+  onIgnorarAlertaStock: () => void;
   onUsoInterno: () => void;
   onVincularPaquete: () => void;
   onQuitarPadre: () => void;
@@ -131,6 +133,9 @@ function MenuAcciones({
           >
             <button type="button" className="menu-item" onClick={() => elegir(onNoRastrearStock)}>
               {producto.ignora_stock ? "sí rastrea stock" : "no rastrear stock"}
+            </button>
+            <button type="button" className="menu-item" onClick={() => elegir(onIgnorarAlertaStock)} title="Sigue llevando stock real — solo deja de avisar 'agotado'/'stock bajo' de este producto">
+              {producto.ignora_alerta_stock ? "sí avisar stock bajo" : "no avisar stock bajo"}
             </button>
             <button type="button" className="menu-item" onClick={() => elegir(onUsoInterno)}>
               {producto.uso_interno ? "producto normal" : "uso interno"}
@@ -516,6 +521,17 @@ export default function Inventario({
   async function actualizarIgnoraStock(p: ProductoInventario, ignora: boolean) {
     const db = await getDb();
     await db.execute("UPDATE productos SET ignora_stock = $1 WHERE id = $2", [ignora ? 1 : 0, p.id]);
+    await cargar();
+  }
+
+  // Para productos que SÍ son inventario real pero el negocio compra muy
+  // rara vez a propósito (una marca que no es la habitual, algo que trajo
+  // el proveedor para activar su código) — sigue llevando stock de verdad,
+  // solo deja de avisar "agotado"/"stock bajo" en Inventario, el avisador
+  // del header y las sugerencias de reposición de Compras.
+  async function actualizarIgnoraAlertaStock(p: ProductoInventario, ignora: boolean) {
+    const db = await getDb();
+    await db.execute("UPDATE productos SET ignora_alerta_stock = $1 WHERE id = $2", [ignora ? 1 : 0, p.id]);
     await cargar();
   }
 
@@ -1012,6 +1028,7 @@ export default function Inventario({
                             producto={p}
                             nombrePadre={p.producto_padre_id ? nombresPadre[p.producto_padre_id] : undefined}
                             onNoRastrearStock={() => actualizarIgnoraStock(p, !p.ignora_stock)}
+                            onIgnorarAlertaStock={() => actualizarIgnoraAlertaStock(p, !p.ignora_alerta_stock)}
                             onUsoInterno={() => actualizarUsoInterno(p, !p.uso_interno)}
                             onVincularPaquete={() => setVinculandoPadreId(p.id)}
                             onQuitarPadre={() => quitarPadre(p)}

@@ -1,0 +1,11 @@
+-- Para productos reales (sí llevan stock, sí se venden) que el negocio
+-- compra muy rara vez a propósito — un producto que trajo el proveedor
+-- para activar su código pero no es lo que normalmente se vende aquí, o
+-- una marca de bombillo que no se repone seguido porque hay otra marca que
+-- sí es la habitual. Sin esto, cada uno de esos aparece para siempre como
+-- "agotado"/"stock bajo" en Inventario, en el avisador del header y en
+-- las sugerencias de reposición de Compras, aunque sea normal que esté en
+-- 0 — distinto de ignora_stock (que es para productos que NUNCA llevan
+-- inventario real, como "DELIVERY") o de desactivar/eliminar el producto
+-- (que si quita el historial de facturas o impide comprarlo de nuevo).
+ALTER TABLE productos ADD COLUMN ignora_alerta_stock INTEGER NOT NULL DEFAULT 0;

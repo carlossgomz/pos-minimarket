@@ -320,7 +320,7 @@ export default function App() {
     try {
       const db = await getDb();
       const rows = await db.selectRapido<{ n: number }[]>(
-        "SELECT COUNT(*) as n FROM productos WHERE activo = 1 AND stock_actual <= 1"
+        "SELECT COUNT(*) as n FROM productos WHERE activo = 1 AND ignora_alerta_stock = 0 AND stock_actual <= 1"
       );
       setProductosStockBajo(rows[0]?.n ?? 0);
     } catch {

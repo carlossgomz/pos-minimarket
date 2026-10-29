@@ -816,6 +816,126 @@ export default function Venta({
   } | null>(null);
   const [abriendoPaquete, setAbriendoPaquete] = useState(false);
 
+  // Apertura al COBRAR — cubre lo que el atajo de agregarAlCarrito no ve:
+  // ese solo mira el stock guardado (antes de vender), así que con 4
+  // sueltos en stock y 6 en el carrito nunca ofrecía abrir nada, y la venta
+  // salía con 2 unidades "fantasma" (confirmar_venta_interna clampa en 0) que
+  // después inflaban el stock al abrir el siguiente paquete. Acá se compara
+  // lo que lleva el carrito contra el stock y se calcula cuántos paquetes
+  // hacen falta.
+  type AperturaCobro = {
+    // Fijo por propuesta — desglosar_producto lo usa como referencia para
+    // no repetir el mismo desglose si se reintenta.
+    id: string;
+    productoId: string;
+    productoNombre: string;
+    stockSuelto: number;
+    cantidadCarrito: number;
+    padreId: string;
+    padreNombre: string;
+    paquetes: number;
+    unidadesPorPaquete: number;
+    // Lo que sigue faltando si el padre no tiene paquetes suficientes —
+    // esa parte se vende igual y queda marcada como stock por revisar.
+    faltante: number;
+  };
+  const [aperturasCobro, setAperturasCobro] = useState<{ aperturas: AperturaCobro[]; pagosBase: LineaPago[] } | null>(null);
+
+  async function calcularAperturasCobro(carrito: LineaCarrito[]): Promise<AperturaCobro[]> {
+    // Sumado por producto: el mismo producto puede ir en dos líneas (precio
+    // normal y precio alternativo).
+    const cantidades = new Map<string, number>();
+    for (const l of carrito) cantidades.set(l.producto_id, (cantidades.get(l.producto_id) ?? 0) + l.cantidad);
+
+    const db = await getDb();
+    const aperturas: AperturaCobro[] = [];
+    for (const [productoId, cantidad] of cantidades) {
+      const [p] = await db.select<
+        { nombre: string; stock_actual: number; producto_padre_id: string | null; unidades_por_paquete_desglose: number | null }[]
+      >("SELECT nombre, stock_actual, producto_padre_id, unidades_por_paquete_desglose FROM productos WHERE id = $1", [productoId]);
+      if (!p || !p.producto_padre_id) continue;
+      const unidadesPorPaquete = p.unidades_por_paquete_desglose ?? 0;
+      if (unidadesPorPaquete <= 0) continue;
+      const stockSuelto = Math.max(0, p.stock_actual);
+      const faltan = cantidad - stockSuelto;
+      if (faltan <= 0.0001) continue;
+
+      const [padre] = await db.select<{ nombre: string; stock_actual: number }[]>(
+        "SELECT nombre, stock_actual FROM productos WHERE id = $1",
+        [p.producto_padre_id]
+      );
+      const paquetesDisponibles = padre ? Math.floor(padre.stock_actual) : 0;
+      if (paquetesDisponibles < 1) continue;
+
+      const paquetes = Math.min(Math.ceil(faltan / unidadesPorPaquete), paquetesDisponibles);
+      aperturas.push({
+        id: crypto.randomUUID(),
+        productoId,
+        productoNombre: p.nombre,
+        stockSuelto,
+        cantidadCarrito: cantidad,
+        padreId: p.producto_padre_id,
+        padreNombre: padre.nombre,
+        paquetes,
+        unidadesPorPaquete,
+        faltante: Math.max(0, faltan - paquetes * unidadesPorPaquete),
+      });
+    }
+    return aperturas;
+  }
+
+  async function confirmarAperturasCobro() {
+    if (!aperturasCobro) return;
+    const { aperturas, pagosBase } = aperturasCobro;
+    setAbriendoPaquete(true);
+    try {
+      for (const a of aperturas) {
+        await invoke("desglosar_producto", {
+          input: {
+            id: a.id,
+            producto_origen_id: a.padreId,
+            producto_destino_id: a.productoId,
+            cantidad_origen: a.paquetes,
+            unidades_generadas: a.paquetes * a.unidadesPorPaquete,
+            motivo: "Apertura automática al cobrar",
+            fecha_hora: fechaHoraVenezuela(),
+          },
+        });
+      }
+    } catch (e) {
+      // Los paquetes que sí se abrieron ya están en el stock — al volver a
+      // cobrar, calcularAperturasCobro solo propone lo que siga faltando.
+      setMensaje(`No se pudo abrir el paquete: ${String(e)}`);
+      setAperturasCobro(null);
+      setAbriendoPaquete(false);
+      return;
+    }
+
+    // Refresca el stock de las líneas para que el aviso de "stock
+    // insuficiente" del recibo refleje el stock ya con el paquete abierto.
+    const db = await getDb();
+    const stocks = new Map<string, number>();
+    for (const a of aperturas) {
+      const [r] = await db.select<{ stock_actual: number }[]>("SELECT stock_actual FROM productos WHERE id = $1", [a.productoId]);
+      if (r) stocks.set(a.productoId, r.stock_actual);
+    }
+    actualizarActivo({
+      carrito: activo.carrito.map((l) =>
+        stocks.has(l.producto_id) ? { ...l, stock_disponible: stocks.get(l.producto_id)! } : l
+      ),
+    });
+    setAperturasCobro(null);
+    setAbriendoPaquete(false);
+    procesarVenta(pagosBase, true);
+  }
+
+  function cobrarSinAbrir() {
+    if (!aperturasCobro) return;
+    const { pagosBase } = aperturasCobro;
+    setAperturasCobro(null);
+    procesarVenta(pagosBase, true);
+  }
+
   async function agregarAlCarrito(p: Producto) {
     if (p.stock_actual <= 0 && p.producto_padre_id) {
       const db = await getDb();
@@ -1003,7 +1123,9 @@ export default function Venta({
   // solo método sin pasar por el formulario). Recibe la lista de pagos ya
   // decidida para no depender del estado de React justo después de
   // actualizarlo (setState es asíncrono).
-  async function procesarVenta(pagosBase: LineaPago[]) {
+  // saltarApertura: true cuando ya se respondió la pregunta de abrir
+  // paquetes (ver confirmarAperturasCobro / cobrarSinAbrir).
+  async function procesarVenta(pagosBase: LineaPago[], saltarApertura = false) {
     if (guardando) return;
     setMensaje(null);
 
@@ -1012,6 +1134,13 @@ export default function Venta({
     if (carrito.length === 0) {
       setMensaje("Agrega al menos un producto antes de cobrar.");
       return;
+    }
+    if (!saltarApertura) {
+      const aperturas = await calcularAperturasCobro(carrito);
+      if (aperturas.length > 0) {
+        setAperturasCobro({ aperturas, pagosBase });
+        return;
+      }
     }
     // Ya no se le pregunta al cajero si quiere "continuar de todas formas"
     // — ese cartel lo cerraba cualquiera sin que quedara rastro. Ahora la
@@ -2252,6 +2381,41 @@ export default function Venta({
           </div>,
           document.body
         )}
+
+      {aperturasCobro && (
+        <div className="modal-fondo" onMouseDown={() => !abriendoPaquete && setAperturasCobro(null)}>
+          <div className="modal-caja" onMouseDown={(e) => e.stopPropagation()}>
+            <h2>Falta stock suelto</h2>
+            {aperturasCobro.aperturas.map((a) => (
+              <div key={a.productoId}>
+                <p className="hint">
+                  "{a.productoNombre}": hay {formatearStock(a.stockSuelto)} y estás vendiendo {formatearStock(a.cantidadCarrito)}.
+                </p>
+                <p>
+                  ¿Abrir {a.paquetes} "{a.padreNombre}" para generar {formatearStock(a.paquetes * a.unidadesPorPaquete)} unidades?
+                  Quedarán {formatearStock(a.stockSuelto + a.paquetes * a.unidadesPorPaquete - a.cantidadCarrito + a.faltante)} sueltas.
+                </p>
+                {a.faltante > 0 && (
+                  <p className="error">
+                    No hay más "{a.padreNombre}" — aun así faltarán {formatearStock(a.faltante)} unidades.
+                  </p>
+                )}
+              </div>
+            ))}
+            <div className="form-row">
+              <button className="link-btn" onClick={() => setAperturasCobro(null)} disabled={abriendoPaquete}>
+                cancelar
+              </button>
+              <button className="link-btn" onClick={cobrarSinAbrir} disabled={abriendoPaquete}>
+                cobrar sin abrir
+              </button>
+              <button className="cobrar-btn" onClick={confirmarAperturasCobro} disabled={abriendoPaquete}>
+                {abriendoPaquete ? "Abriendo…" : "Abrir y cobrar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {propuestaApertura && (
         <div className="modal-fondo" onMouseDown={() => setPropuestaApertura(null)}>
